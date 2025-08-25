@@ -37,6 +37,7 @@ export default function ProcessingPage() {
   const [steps, setSteps] = useState<ProcessingStep[]>([
     { id: 'fetch', name: 'Scaricamento registrazioni da Daily.co', status: 'pending' },
     { id: 'transcribe', name: 'Trascrizione con OpenAI Whisper', status: 'pending' },
+    { id: 'ai-edit', name: 'Analisi AI per editing automatico', status: 'pending' },
     { id: 'save', name: 'Salvataggio su Supabase', status: 'pending' },
     { id: 'complete', name: 'Processing completato', status: 'pending' }
   ])
@@ -203,7 +204,32 @@ export default function ProcessingPage() {
       updateStep('transcribe', 'completed', `${transcribeData.transcriptionsCount} trascrizioni completate`)
       setCurrentStep(2)
 
-      // Step 3: Save to Supabase
+      // Step 3: AI Editing Analysis
+      updateStep('ai-edit', 'processing', 'AI sta analizzando la conversazione per creare focus segments automatici...')
+      
+      const aiEditResponse = await fetch('/api/recordings/ai-edit', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          roomId: data.roomId,
+          transcriptions: transcribeData.transcriptions,
+          recordings: transcribeData.recordings
+        })
+      })
+
+      if (!aiEditResponse.ok) {
+        console.error('AI editing failed, continuing without it')
+        updateStep('ai-edit', 'error', 'AI editing fallito - continuo senza focus automatici')
+      } else {
+        const aiEditData = await aiEditResponse.json()
+        updateStep('ai-edit', 'completed', `${aiEditData.result.focusSegments.length} focus segments generati automaticamente`)
+        // Store AI editing results for the save step
+        transcribeData.aiEditingResult = aiEditData.result
+      }
+      
+      setCurrentStep(3)
+
+      // Step 4: Save to Supabase
       updateStep('save', 'processing', 'Salvataggio dati...')
       
       const saveResponse = await fetch('/api/recordings/save', {
@@ -212,7 +238,8 @@ export default function ProcessingPage() {
         body: JSON.stringify({
           roomId: data.roomId,
           recordings: transcribeData.recordings,
-          transcriptions: transcribeData.transcriptions
+          transcriptions: transcribeData.transcriptions,
+          aiEditingResult: transcribeData.aiEditingResult // Include AI-generated focus segments
         })
       })
 
@@ -221,9 +248,9 @@ export default function ProcessingPage() {
       }
 
       updateStep('save', 'completed', 'Dati salvati su database')
-      setCurrentStep(3)
+      setCurrentStep(4)
 
-      // Step 4: Complete
+      // Step 5: Complete
       updateStep('complete', 'completed', 'Processing completato con successo!')
       
       // Clear session storage

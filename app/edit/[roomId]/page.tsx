@@ -45,6 +45,10 @@ interface ZoomRange {
   endTime: number;
   focusOn: string; // recording ID to focus on
   participantIndex: number;
+  aiGenerated?: boolean; // Whether this was created by AI
+  reason?: string; // AI's reason for this focus segment
+  confidence?: number; // AI confidence score (0-1)
+  type?: 'monologue' | 'conversation' | 'silence'; // AI-detected segment type
 }
 
 export default function EditPage() {
@@ -71,6 +75,9 @@ export default function EditPage() {
   const [dragCurrentTime, setDragCurrentTime] = useState<number | null>(null);
   const [videoErrors, setVideoErrors] = useState<Set<string>>(new Set());
   const [focusedVideo, setFocusedVideo] = useState<string | null>(null);
+  const [aiRecommendations, setAiRecommendations] = useState<string[]>([]);
+  const [loadingAISegments, setLoadingAISegments] = useState(false);
+  const [aiSegmentsLoaded, setAiSegmentsLoaded] = useState(false);
 
   const fetchEditData = useCallback(async () => {
     try {
@@ -113,9 +120,92 @@ export default function EditPage() {
     }
   }, [roomId]);
 
+  const loadAIFocusSegments = useCallback(async () => {
+    if (!editData || aiSegmentsLoaded) return;
+    
+    try {
+      setLoadingAISegments(true);
+      console.log('Loading AI focus segments for room:', roomId);
+      
+      const response = await fetch(`/api/recordings/focus-segments?roomId=${roomId}`);
+      if (!response.ok) {
+        throw new Error('Failed to load AI focus segments');
+      }
+      
+      const data = await response.json();
+      
+      if (data.focusSegments && data.focusSegments.length > 0) {
+        // Convert AI focus segments to the format expected by the editor
+        const aiZoomRanges: ZoomRange[] = data.focusSegments.map((segment: {
+          id: string;
+          start_time: number;
+          end_time: number;
+          focused_participant_id: string;
+          reason: string;
+          confidence: number;
+          segment_type: 'monologue' | 'conversation' | 'silence';
+          recordings?: { id: string };
+        }) => {
+          // Find the participant recording that matches the focused participant
+          const focusedRecording = editData.recordings.find(
+            rec => rec.id === segment.recordings?.id || 
+                   rec.id === segment.focused_participant_id
+          );
+          
+          const participantIndex = focusedRecording 
+            ? editData.recordings.findIndex(rec => rec.id === focusedRecording.id)
+            : 0;
+          
+          return {
+            id: `ai-${segment.id}-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
+            startTime: segment.start_time,
+            endTime: segment.end_time,
+            focusOn: focusedRecording?.id || editData.recordings[0]?.id,
+            participantIndex,
+            aiGenerated: true,
+            reason: segment.reason,
+            confidence: segment.confidence,
+            type: segment.segment_type
+          };
+        });
+        
+        console.log(`Loaded ${aiZoomRanges.length} AI focus segments`);
+        
+        // Only add AI segments if we don't already have any AI-generated segments
+        setZoomRanges(prev => {
+          const hasAISegments = prev.some(range => range.aiGenerated);
+          if (hasAISegments) {
+            console.log('AI segments already loaded, skipping...');
+            return prev;
+          }
+          return [...prev, ...aiZoomRanges];
+        });
+        
+        // Store AI recommendations if available
+        if (data.aiEditingSession?.ai_recommendations) {
+          setAiRecommendations(data.aiEditingSession.ai_recommendations);
+        }
+      }
+      
+      setAiSegmentsLoaded(true);
+      
+    } catch (error) {
+      console.error('Error loading AI focus segments:', error);
+      // Don't show error to user, just log it - AI segments are optional
+    } finally {
+      setLoadingAISegments(false);
+    }
+  }, [roomId, editData, aiSegmentsLoaded]);
+
   useEffect(() => {
     fetchEditData();
   }, [fetchEditData]);
+  
+  useEffect(() => {
+    if (editData && !aiSegmentsLoaded) {
+      loadAIFocusSegments();
+    }
+  }, [editData, loadAIFocusSegments, aiSegmentsLoaded]);
 
   const togglePlay = () => {
     const newIsPlaying = !isPlaying;
@@ -728,19 +818,29 @@ export default function EditPage() {
                 {zoomRanges.map((range) => (
                   <div
                     key={range.id}
-                    className="absolute top-0 h-full bg-green-400 bg-opacity-50 rounded"
+                    className={`absolute top-0 h-full rounded ${
+                      range.aiGenerated 
+                        ? 'bg-blue-400 bg-opacity-60 border-2 border-blue-500' 
+                        : 'bg-green-400 bg-opacity-50'
+                    }`}
                     style={{
                       left: `${(range.startTime / duration) * 100}%`,
                       width: `${
                         ((range.endTime - range.startTime) / duration) * 100
                       }%`,
                     }}
-                    title={`Partecipante ${
-                      range.participantIndex
+                    title={`${range.aiGenerated ? '🤖 AI: ' : ''}Partecipante ${
+                      range.participantIndex + 1
                     }: ${range.startTime.toFixed(1)}s - ${range.endTime.toFixed(
                       1
-                    )}s`}
-                  />
+                    )}s${range.reason ? `\nMotivo: ${range.reason}` : ''}${
+                      range.confidence ? `\nFiducia: ${(range.confidence * 100).toFixed(0)}%` : ''
+                    }`}
+                  >
+                    {range.aiGenerated && (
+                      <div className="absolute -top-1 -right-1 text-xs">🤖</div>
+                    )}
+                  </div>
                 ))}
 
                 {/* Current selection range */}
@@ -783,16 +883,31 @@ export default function EditPage() {
                         {zoomRanges.map((range) => (
                           <div
                             key={range.id}
-                            className="flex items-center justify-between px-4 py-2 hover:bg-gray-100"
+                            className={`flex items-center justify-between px-4 py-2 hover:bg-gray-100 ${
+                              range.aiGenerated ? 'bg-blue-50' : ''
+                            }`}
                           >
-                            <span className="text-sm">
-                              Partecipante {range.participantIndex}:{" "}
-                              {range.startTime.toFixed(1)}s -{" "}
-                              {range.endTime.toFixed(1)}s
-                            </span>
+                            <div className="flex-1">
+                              <div className="flex items-center gap-2">
+                                {range.aiGenerated && <span className="text-xs">🤖</span>}
+                                <span className="text-sm">
+                                  Partecipante {range.participantIndex + 1}:{" "}
+                                  {range.startTime.toFixed(1)}s -{" "}
+                                  {range.endTime.toFixed(1)}s
+                                </span>
+                              </div>
+                              {range.aiGenerated && range.reason && (
+                                <div className="text-xs text-gray-600 mt-1">
+                                  {range.reason}
+                                  {range.confidence && 
+                                    ` (${(range.confidence * 100).toFixed(0)}% fiducia)`
+                                  }
+                                </div>
+                              )}
+                            </div>
                             <button
                               onClick={() => removeZoomRange(range.id)}
-                              className="text-red-500 hover:text-red-700 text-sm"
+                              className="text-red-500 hover:text-red-700 text-sm ml-2"
                             >
                               Rimuovi
                             </button>
@@ -834,6 +949,30 @@ export default function EditPage() {
                     >
                       Annulla
                     </Button>
+                  </div>
+                </div>
+              )}
+
+              {/* AI Recommendations */}
+              {aiRecommendations.length > 0 && (
+                <div className="bg-gradient-to-r from-blue-50 to-purple-50 border border-blue-200 rounded-lg p-4 mt-4">
+                  <div className="flex items-center gap-2 mb-3">
+                    <span className="text-lg">🤖</span>
+                    <h3 className="font-medium text-blue-900">Raccomandazioni AI per l&apos;Editing</h3>
+                    {loadingAISegments && (
+                      <div className="ml-2 animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600"></div>
+                    )}
+                  </div>
+                  <div className="space-y-2">
+                    {aiRecommendations.map((recommendation, index) => (
+                      <div key={index} className="flex items-start gap-2">
+                        <div className="mt-1.5 w-1.5 h-1.5 rounded-full bg-blue-400 flex-shrink-0"></div>
+                        <span className="text-sm text-blue-800">{recommendation}</span>
+                      </div>
+                    ))}
+                  </div>
+                  <div className="mt-3 text-xs text-blue-600">
+                    💡 I segmenti focus evidenziati in blu sono stati generati automaticamente dall&apos;AI
                   </div>
                 </div>
               )}

@@ -41,7 +41,7 @@ interface Transcription {
 
 export async function POST(request: NextRequest) {
   try {
-    const { roomId, recordings, transcriptions } = await request.json()
+    const { roomId, recordings, transcriptions, aiEditingResult } = await request.json()
 
     if (!recordings || !transcriptions) {
       return NextResponse.json(
@@ -169,14 +169,78 @@ export async function POST(request: NextRequest) {
       )
     }
 
+    // Save AI-generated focus segments if available
+    let savedFocusSegments = 0
+    if (aiEditingResult && aiEditingResult.focusSegments && aiEditingResult.focusSegments.length > 0) {
+      console.log(`Saving ${aiEditingResult.focusSegments.length} AI-generated focus segments`)
+      
+      for (const focusSegment of aiEditingResult.focusSegments) {
+        try {
+          // Find the participant recording ID to link focus segments
+          const participantIndex = parseInt(focusSegment.focusedParticipantId.replace('participant_', '')) - 1
+          const targetRecording = savedRecordings[participantIndex]
+          
+          if (targetRecording) {
+            const { error: focusError } = await supabase
+              .from('focus_segments')
+              .insert({
+                room_id: roomData.id,
+                start_time: focusSegment.startTime,
+                end_time: focusSegment.endTime,
+                focused_participant_id: targetRecording.id,
+                created_by: 'ai_system', // Indicate this was created by AI
+                reason: focusSegment.reason,
+                confidence: focusSegment.confidence,
+                segment_type: focusSegment.type,
+                ai_generated: true
+              })
+
+            if (focusError) {
+              console.error(`Failed to save focus segment:`, focusError)
+              errors.push(`Failed to save focus segment: ${focusError.message}`)
+            } else {
+              savedFocusSegments++
+            }
+          }
+        } catch (error) {
+          console.error(`Error saving focus segment:`, error)
+          errors.push(`Error saving focus segment: ${error instanceof Error ? error.message : 'Unknown error'}`)
+        }
+      }
+      
+      // Also save the AI editing metadata
+      try {
+        const { error: aiEditError } = await supabase
+          .from('ai_editing_sessions')
+          .insert({
+            room_id: roomData.id,
+            total_duration: aiEditingResult.totalDuration,
+            focus_segments_count: aiEditingResult.focusSegments.length,
+            analysis_confidence: aiEditingResult.analysisConfidence,
+            ai_recommendations: aiEditingResult.aiRecommendations,
+            processing_time: aiEditingResult.processingTime,
+            created_at: new Date().toISOString()
+          })
+
+        if (aiEditError) {
+          console.error('Failed to save AI editing session:', aiEditError)
+          errors.push(`Failed to save AI editing session: ${aiEditError.message}`)
+        }
+      } catch (error) {
+        console.error('Error saving AI editing session:', error)
+        errors.push(`Error saving AI editing session: ${error instanceof Error ? error.message : 'Unknown error'}`)
+      }
+    }
+
     return NextResponse.json({
       success: true,
       savedRecordings: savedRecordings.length,
       savedTranscriptions: savedTranscriptions.length,
+      savedFocusSegments: savedFocusSegments,
       recordings: savedRecordings,
       transcriptions: savedTranscriptions,
       errors: errors.length > 0 ? errors : undefined,
-      message: `${savedRecordings.length} registrazioni e ${savedTranscriptions.length} trascrizioni salvate con successo`
+      message: `${savedRecordings.length} registrazioni, ${savedTranscriptions.length} trascrizioni${savedFocusSegments > 0 ? ` e ${savedFocusSegments} focus segments AI` : ''} salvate con successo`
     })
 
   } catch (error) {
