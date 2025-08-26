@@ -237,7 +237,7 @@ export default function ProcessingPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           roomId: data.roomId,
-          recordings: transcribeData.recordings,
+          recordings: transcribeData.recordings, // Now includes start_ts from Daily.co
           transcriptions: transcribeData.transcriptions,
           aiEditingResult: transcribeData.aiEditingResult // Include AI-generated focus segments
         })

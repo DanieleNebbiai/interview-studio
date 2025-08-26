@@ -6,7 +6,8 @@ interface DailyRecording {
   id: string
   roomName: string
   status: string
-  startTime: number
+  startTime: number // Unix timestamp (seconds) from Daily.co start_ts
+  recordingStartedAt?: string // ISO timestamp of when recording actually started
   duration?: number
   downloadUrl?: string
   fileSize?: number
@@ -104,6 +105,18 @@ export async function POST(request: NextRequest) {
           continue
         }
 
+        // Convert Daily.co start_ts (Unix timestamp in seconds) to ISO timestamp
+        let recordingStartedAt = null;
+        if (recording.startTime) {
+          // Convert Unix timestamp (seconds) to milliseconds and create Date
+          recordingStartedAt = new Date(recording.startTime * 1000);
+          console.log(`Recording ${recording.id} start_ts: ${recording.startTime} -> ${recordingStartedAt.toISOString()}`);
+        }
+        
+        if (!recordingStartedAt) {
+          console.log(`Recording ${recording.id} has no start_ts - will use null for recording_started_at`);
+        }
+
         // Save recording to database
         const { data: recordingData, error: recordingError } = await supabase
           .from('recordings')
@@ -115,6 +128,7 @@ export async function POST(request: NextRequest) {
             recording_url: recording.downloadUrl,
             duration: recording.duration,
             file_size: recording.fileSize,
+            recording_started_at: recordingStartedAt,
             status: 'transcribed'
           })
           .select()

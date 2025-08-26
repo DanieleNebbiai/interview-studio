@@ -255,9 +255,9 @@ export default function RoomPage() {
         return;
       }
 
+      console.log("Starting synchronized recording with minimal delay for timestamp capture...");
+
       try {
-        console.log("Starting synchronized recording with 2 second delay...");
-        
         const response = await fetch("/api/recordings/start-synchronized", {
           method: "POST",
           headers: {
@@ -266,7 +266,7 @@ export default function RoomPage() {
           body: JSON.stringify({
             roomName: roomId,
             participantSessionIds: participantIds,
-            delayMs: 5000 // 5 second delay for better sync
+            delayMs: 1000 // Minimal 1 second delay just for API processing
           }),
         });
 
@@ -275,6 +275,8 @@ export default function RoomPage() {
         if (data.success) {
           console.log(`Successfully started ${data.successCount} synchronized recordings`);
           console.log(`Timing spread: ${data.timingSpreadMs}ms`);
+          
+          console.log("Recording timestamps will be handled by Daily.co's start_ts field");
           
           // Convert successful results to RecordingInstance format
           const successfulRecordings: RecordingInstance[] = data.results
@@ -290,7 +292,7 @@ export default function RoomPage() {
           setRecordingInstances(successfulRecordings);
           setIsRecording(true);
 
-          console.log(`Started ${successfulRecordings.length} synchronized recordings`);
+          console.log(`Started ${successfulRecordings.length} synchronized recordings with timestamp tracking`);
         } else {
           console.error("Synchronized recording failed:", data.error);
           
@@ -623,6 +625,7 @@ export default function RoomPage() {
                   </span>
                 </div>
               )}
+
             </div>
           </div>
 
@@ -660,6 +663,7 @@ export default function RoomPage() {
             }
           }}
         />
+
 
         <div className="absolute bottom-6 left-1/2 transform -translate-x-1/2">
           <div className="flex items-center space-x-4 bg-gray-800/90 backdrop-blur rounded-full px-6 py-4">
@@ -705,7 +709,7 @@ export default function RoomPage() {
                     ? "bg-red-600 hover:bg-red-700 animate-pulse"
                     : "bg-gray-700 hover:bg-gray-600"
                 }`}
-                title={isRecording ? "Stop Recording" : "Start Recording"}
+                title={isRecording ? "Stop Recording" : "Start Recording with Timestamp Sync"}
               >
                 {isRecording ? (
                   <Square className="h-6 w-6 fill-current" />

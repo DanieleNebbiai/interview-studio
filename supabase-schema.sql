@@ -8,6 +8,7 @@ CREATE TABLE recordings (
   recording_url TEXT,
   duration INTEGER, -- in seconds
   file_size BIGINT, -- in bytes
+  recording_started_at TIMESTAMP WITH TIME ZONE, -- Timestamp esatto di inizio registrazione per sincronizzazione
   status TEXT DEFAULT 'processing' CHECK (status IN ('processing', 'downloaded', 'transcribed', 'failed')),
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()

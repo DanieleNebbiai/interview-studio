@@ -61,6 +61,8 @@ export async function POST(request: NextRequest) {
       try {
         console.log(`Starting recording for session ${sessionId} with instanceId ${instanceId}`)
         
+        const recordingStartTime = Date.now() // Capture exact start time before API call
+        
         const response = await fetch(`https://api.daily.co/v1/rooms/${roomName}/recordings/start`, {
           method: 'POST',
           headers: {
@@ -79,7 +81,8 @@ export async function POST(request: NextRequest) {
             sessionId,
             instanceId,
             recording: data,
-            actualStartTime: Date.now() - syncStartTime // Track actual timing
+            actualStartTime: Date.now() - syncStartTime, // Track actual timing
+            recordingStartedAt: new Date(recordingStartTime).toISOString() // ISO timestamp
           }
         } else {
           console.error(`Failed to start recording for session ${sessionId}:`, data)

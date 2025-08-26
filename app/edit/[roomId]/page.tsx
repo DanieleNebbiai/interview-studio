@@ -17,6 +17,8 @@ interface Recording {
   recording_url: string;
   duration: number;
   file_size: number;
+  recording_started_at?: string; // ISO timestamp for synchronization
+  created_at?: string; // Fallback timestamp if recording_started_at is not available
 }
 
 interface Transcription {
@@ -51,6 +53,13 @@ interface ZoomRange {
   type?: 'monologue' | 'conversation' | 'silence'; // AI-detected segment type
 }
 
+interface VideoSection {
+  id: string;
+  startTime: number;
+  endTime: number;
+  isDeleted: boolean;
+}
+
 export default function EditPage() {
   const params = useParams();
   const router = useRouter();
@@ -78,6 +87,67 @@ export default function EditPage() {
   const [aiRecommendations, setAiRecommendations] = useState<string[]>([]);
   const [loadingAISegments, setLoadingAISegments] = useState(false);
   const [aiSegmentsLoaded, setAiSegmentsLoaded] = useState(false);
+  const [syncOffsets, setSyncOffsets] = useState<{ [recordingId: string]: number }>({});
+  
+  // Split/Section system
+  const [splitPoints, setSplitPoints] = useState<number[]>([]);
+  const [videoSections, setVideoSections] = useState<VideoSection[]>([]);
+  const [isSplitMode, setIsSplitMode] = useState<boolean>(false);
+  const [contextMenu, setContextMenu] = useState<{x: number; y: number; sectionId: string} | null>(null);
+
+  // Calculate cut offsets based on recording start timestamps (with created_at fallback)
+  // These offsets are used to automatically "cut" the beginning of videos to synchronize their start points
+  // Example: Video A starts at 00:00, Video B starts at 00:02 -> Video A gets 2s cut, both effectively start at 00:02
+  const calculateSyncOffsets = useCallback((recordings: Recording[]) => {
+    console.log('=== AUTO-CUT OFFSET CALCULATION ===');
+    console.log('Raw recordings data:', recordings.map(r => ({
+      id: r.id,
+      recording_started_at: r.recording_started_at,
+      created_at: r.created_at
+    })));
+    
+    // Try recording_started_at first, fallback to created_at
+    const recordingsWithTimestamps = recordings.filter(r => r.recording_started_at || r.created_at);
+    
+    if (recordingsWithTimestamps.length < 2) {
+      console.log('Not enough timestamps for auto-cut synchronization');
+      return {};
+    }
+
+    // Determine which timestamp to use and log the source
+    const usingRecordingStarted = recordings.some(r => r.recording_started_at);
+    const timestampSource = usingRecordingStarted ? 'recording_started_at' : 'created_at';
+    console.log(`Using ${timestampSource} for auto-cut synchronization`);
+
+    // Find the latest recording start time as reference point (all videos will be cut to start from this point)
+    const timestamps = recordingsWithTimestamps.map(r => {
+      const timestampStr = r.recording_started_at || r.created_at!;
+      const timestamp = new Date(timestampStr).getTime();
+      console.log(`Recording ${r.id}: ${timestampStr} -> ${timestamp}ms`);
+      return {
+        id: r.id,
+        timestamp
+      };
+    });
+    
+    const latestTime = Math.max(...timestamps.map(t => t.timestamp));
+    console.log(`Latest time (sync reference): ${latestTime}ms (${new Date(latestTime).toISOString()})`);
+    
+    // Calculate cut offset for each recording (how much to cut from the beginning)
+    const offsets: { [recordingId: string]: number } = {};
+    timestamps.forEach(({ id, timestamp }) => {
+      const cutMs = latestTime - timestamp;
+      const cutSec = cutMs / 1000;
+      offsets[id] = cutSec;
+      console.log(`Recording ${id}: will cut ${cutMs}ms = ${cutSec.toFixed(3)}s from start (using ${timestampSource})`);
+    });
+    
+    console.log('Final cut offsets:', offsets);
+    console.log('=== END AUTO-CUT CALCULATION ===');
+    
+    setSyncOffsets(offsets);
+    return offsets;
+  }, []);
 
   const fetchEditData = useCallback(async () => {
     try {
@@ -104,11 +174,26 @@ export default function EditPage() {
           roomName: data.recordings[0].room?.name || roomId,
         });
 
-        // Set duration to the longest recording
+        // Offsets already calculated above
+
+        // Calculate sync offsets first
+        const offsets = calculateSyncOffsets(data.recordings);
+        
+        // Set duration to the longest recording minus the maximum offset (to align all videos)
         const maxDuration = Math.max(
           ...data.recordings.map((r: Recording) => r.duration)
         );
-        setDuration(maxDuration);
+        const maxOffset = Math.max(...Object.values(offsets));
+        const adjustedDuration = maxDuration - maxOffset;
+        setDuration(adjustedDuration);
+        
+        // Initialize with one full section (0 to adjustedDuration)
+        setVideoSections([{
+          id: `section-0-${adjustedDuration}`,
+          startTime: 0,
+          endTime: adjustedDuration,
+          isDeleted: false
+        }]);
       } else {
         throw new Error("No recordings found for this room");
       }
@@ -118,7 +203,7 @@ export default function EditPage() {
     } finally {
       setLoading(false);
     }
-  }, [roomId]);
+  }, [roomId, calculateSyncOffsets]);
 
   const loadAIFocusSegments = useCallback(async () => {
     if (!editData || aiSegmentsLoaded) return;
@@ -207,20 +292,41 @@ export default function EditPage() {
     }
   }, [editData, loadAIFocusSegments, aiSegmentsLoaded]);
 
+  // Close context menu when clicking elsewhere
+  useEffect(() => {
+    const handleClickOutside = () => setContextMenu(null);
+    if (contextMenu) {
+      document.addEventListener('click', handleClickOutside);
+      return () => document.removeEventListener('click', handleClickOutside);
+    }
+  }, [contextMenu]);
+
   const togglePlay = () => {
     const newIsPlaying = !isPlaying;
     setIsPlaying(newIsPlaying);
 
-    // Control all videos
-    Object.values(videoRefs.current).forEach((video) => {
-      if (video) {
-        if (newIsPlaying) {
-          video.play().catch(console.error);
-        } else {
+    if (newIsPlaying) {
+      console.log("=== PLAYING WITH AUTO-CUT SYNC ===");
+      // First, sync all videos to current time (applying cut offsets)
+      syncAllVideosToTime(currentTime);
+      
+      // Small delay to ensure seeking completes before playing
+      setTimeout(() => {
+        // Then start playing all videos
+        Object.values(videoRefs.current).forEach((video) => {
+          if (video) {
+            video.play().catch(console.error);
+          }
+        });
+      }, 100);
+    } else {
+      // Just pause all videos
+      Object.values(videoRefs.current).forEach((video) => {
+        if (video) {
           video.pause();
         }
-      }
-    });
+      });
+    }
 
     // Check if we're in a focus range
     checkFocusState();
@@ -258,23 +364,20 @@ export default function EditPage() {
     return "grid-cols-3";
   };
 
-  // Sync all videos to a specific time
+  // Sync all videos to a specific time, applying cut offsets (videos start from their offset point)
   const syncAllVideosToTime = useCallback((time: number) => {
-    console.log(`Syncing all videos to time: ${time}s`);
+    console.log(`Syncing all videos to time: ${time}s with cut offsets`);
     Object.entries(videoRefs.current).forEach(([recordingId, video]) => {
       if (video) {
-        const currentVideoTime = video.currentTime;
-        const timeDiff = Math.abs(currentVideoTime - time);
-        console.log(
-          `Video ${recordingId}: current=${currentVideoTime}s, target=${time}s, diff=${timeDiff}s`
-        );
-
-        // Always sync for precision, remove the 0.5s tolerance for focus transitions
-        video.currentTime = time;
-        console.log(`Video ${recordingId}: set to ${time}s`);
+        // Apply cut offset - video time = timeline time + its starting offset
+        const offset = syncOffsets[recordingId] || 0;
+        const videoTime = time + offset;
+        
+        video.currentTime = videoTime;
+        console.log(`Video ${recordingId}: timeline ${time}s -> video time ${videoTime}s (cut offset: ${offset}s)`);
       }
     });
-  }, []);
+  }, [syncOffsets]);
 
   // Check if current time is in any focus range and update focused video
   const checkFocusState = useCallback(() => {
@@ -292,17 +395,12 @@ export default function EditPage() {
     } else {
       if (focusedVideo !== null) {
         console.log(
-          `Exiting focus mode at time ${currentTime}s, syncing all videos`
+          `Exiting focus mode at time ${currentTime}s`
         );
-        // Sync all videos when exiting focus to current time
-        const syncTime = currentTime;
-        setTimeout(() => {
-          syncAllVideosToTime(syncTime);
-        }, 100); // Small delay to ensure focus transition completes
         setFocusedVideo(null);
       }
     }
-  }, [currentTime, zoomRanges, focusedVideo, syncAllVideosToTime]);
+  }, [currentTime, zoomRanges, focusedVideo]);
 
   // Monitor time changes to handle focus transitions
   useEffect(() => {
@@ -357,16 +455,53 @@ export default function EditPage() {
     }
   };
 
-  // Handle regular timeline clicks (just seeking)
+  // Handle regular timeline clicks (seeking or splitting)
   const handleTimelineClick = (event: React.MouseEvent<HTMLDivElement>) => {
     const rect = event.currentTarget.getBoundingClientRect();
     const clickX = event.clientX - rect.left;
     const percentage = clickX / rect.width;
     const clickTime = percentage * duration;
 
-    // Normal timeline click - seek video
-    setCurrentTime(clickTime);
-    syncAllVideosToTime(clickTime);
+    if (isSplitMode) {
+      // Split mode - create split point
+      createSplitAtTime(clickTime);
+    } else {
+      // Normal mode - seek video
+      // Check if clicking on a deleted section
+      const clickedSection = videoSections.find(section => 
+        clickTime >= section.startTime && clickTime < section.endTime
+      );
+      
+      if (clickedSection && clickedSection.isDeleted) {
+        console.log('Cannot seek to deleted section, finding nearest available time');
+        // Find nearest non-deleted section
+        const availableSections = videoSections.filter(s => !s.isDeleted);
+        
+        if (availableSections.length > 0) {
+          // Find closest available section
+          const closest = availableSections.reduce((prev, curr) => {
+            const prevDist = Math.min(
+              Math.abs(prev.startTime - clickTime),
+              Math.abs(prev.endTime - clickTime)
+            );
+            const currDist = Math.min(
+              Math.abs(curr.startTime - clickTime),
+              Math.abs(curr.endTime - clickTime)
+            );
+            return currDist < prevDist ? curr : prev;
+          });
+          
+          // Seek to start of closest section
+          const seekTime = closest.startTime;
+          setCurrentTime(seekTime);
+          syncAllVideosToTime(seekTime);
+        }
+      } else {
+        // Normal seek to available section
+        setCurrentTime(clickTime);
+        syncAllVideosToTime(clickTime);
+      }
+    }
   };
 
   // Handle focus timeline mouse events (for drag selection)
@@ -384,13 +519,18 @@ export default function EditPage() {
       setDragCurrentTime(clickTime);
       setIsDragging(true);
     } else {
-      // Normal seeking
+      // Normal seeking - check for deleted sections
+      const clickedSection = videoSections.find(section => 
+        clickTime >= section.startTime && clickTime < section.endTime
+      );
+      
+      if (clickedSection && clickedSection.isDeleted) {
+        console.log('Cannot seek to deleted section on focus timeline');
+        return; // Don't seek to deleted sections
+      }
+      
       setCurrentTime(clickTime);
-      Object.values(videoRefs.current).forEach((video) => {
-        if (video) {
-          video.currentTime = clickTime;
-        }
-      });
+      syncAllVideosToTime(clickTime);
     }
   };
 
@@ -484,6 +624,81 @@ export default function EditPage() {
     }
   };
 
+  // Split/Section functions
+  const toggleSplitMode = () => {
+    setIsSplitMode(!isSplitMode);
+    console.log(`Split mode ${!isSplitMode ? 'enabled' : 'disabled'}`);
+  };
+
+  const createSplitAtTime = (time: number) => {
+    // Don't create split at exact start or end
+    if (time <= 0 || time >= duration) return;
+    
+    // Don't create duplicate splits
+    if (splitPoints.includes(time)) return;
+    
+    // Add new split point and sort
+    const newSplitPoints = [...splitPoints, time].sort((a, b) => a - b);
+    setSplitPoints(newSplitPoints);
+    
+    // Recreate sections based on split points
+    const newSections: VideoSection[] = [];
+    const allPoints = [0, ...newSplitPoints, duration];
+    
+    for (let i = 0; i < allPoints.length - 1; i++) {
+      const start = allPoints[i];
+      const end = allPoints[i + 1];
+      
+      // Check if this section was previously deleted
+      const existingSection = videoSections.find(s => 
+        Math.abs(s.startTime - start) < 0.1 && Math.abs(s.endTime - end) < 0.1
+      );
+      
+      newSections.push({
+        id: `section-${start}-${end}`,
+        startTime: start,
+        endTime: end,
+        isDeleted: existingSection?.isDeleted || false
+      });
+    }
+    
+    setVideoSections(newSections);
+    console.log(`Created split at ${time}s. Total sections: ${newSections.length}`);
+  };
+
+  const deleteSection = (sectionId: string) => {
+    setVideoSections(prev => 
+      prev.map(section => 
+        section.id === sectionId 
+          ? { ...section, isDeleted: true }
+          : section
+      )
+    );
+    setContextMenu(null);
+    console.log(`Deleted section: ${sectionId}`);
+  };
+
+  const restoreSection = (sectionId: string) => {
+    setVideoSections(prev => 
+      prev.map(section => 
+        section.id === sectionId 
+          ? { ...section, isDeleted: false }
+          : section
+      )
+    );
+  };
+
+  const resetSplits = () => {
+    setSplitPoints([]);
+    setVideoSections([{
+      id: `section-0-${duration}`,
+      startTime: 0,
+      endTime: duration,
+      isDeleted: false
+    }]);
+    console.log('All splits reset');
+  };
+
   const renderVideoCard = (recording: Recording, index: number) => {
     const isSelected = selectedFocus === recording.id;
     const isInZoomRange = zoomRanges.some(
@@ -522,15 +737,46 @@ export default function EditPage() {
             console.log(
               `Video loaded: ${recording.id}, duration: ${video.duration}s`
             );
-            // Update duration with the longest video
-            setDuration((prev) => Math.max(prev, video.duration));
+            
+            // Apply initial cut offset - start video from its offset point
+            const offset = syncOffsets[recording.id] || 0;
+            const initialVideoTime = currentTime + offset;
+            video.currentTime = initialVideoTime;
+            console.log(`Video ${recording.id}: applying cut offset ${offset}s, starting at ${initialVideoTime}s`);
           }}
           onTimeUpdate={(e) => {
             const video = e.currentTarget;
             // Update current time from the focused video, or first video if no focus
             const masterVideoId = focusedVideo || editData?.recordings[0].id;
             if (recording.id === masterVideoId) {
-              setCurrentTime(video.currentTime);
+              // Convert video time back to timeline time (remove the cut offset)
+              const videoTime = video.currentTime;
+              const offset = syncOffsets[recording.id] || 0;
+              const timelineTime = videoTime - offset;
+              
+              setCurrentTime(timelineTime);
+              
+              // Check if current timeline time is in a deleted section
+              const currentSection = videoSections.find(section => 
+                timelineTime >= section.startTime && timelineTime < section.endTime
+              );
+              
+              if (currentSection && currentSection.isDeleted && isPlaying) {
+                // Find next non-deleted section
+                const nextSection = videoSections
+                  .filter(section => !section.isDeleted && section.startTime > timelineTime)
+                  .sort((a, b) => a.startTime - b.startTime)[0];
+                
+                if (nextSection) {
+                  console.log(`Skipping deleted section ${currentSection.startTime.toFixed(1)}s-${currentSection.endTime.toFixed(1)}s, jumping to ${nextSection.startTime.toFixed(1)}s`);
+                  syncAllVideosToTime(nextSection.startTime);
+                } else {
+                  // No more sections, pause video
+                  console.log('Reached end of non-deleted sections, pausing video');
+                  setIsPlaying(false);
+                  Object.values(videoRefs.current).forEach(v => v?.pause());
+                }
+              }
             }
           }}
           onError={(e) => {
@@ -636,6 +882,12 @@ export default function EditPage() {
             </div>
           </div>
           <div className="flex items-center space-x-2">
+            {Object.keys(syncOffsets).length > 0 && (
+              <div className="text-sm text-green-600 bg-green-50 px-3 py-1 rounded-full">
+                ✂️ Video tagliati automaticamente ({Object.keys(syncOffsets).length} offset applicati)
+                {editData?.recordings?.some(r => r.recording_started_at) ? '' : ' - usando created_at'}
+              </div>
+            )}
             <Button
               onClick={fetchEditData}
               variant="outline"
@@ -747,21 +999,97 @@ export default function EditPage() {
                   {(duration % 60).toFixed(0).padStart(2, "0")}
                 </div>
               </div>
+
+              {/* Split Controls */}
+              <div className="flex items-center space-x-2">
+                <Button
+                  onClick={toggleSplitMode}
+                  size="sm"
+                  variant={isSplitMode ? "default" : "outline"}
+                  className={isSplitMode ? "bg-orange-600 hover:bg-orange-700" : ""}
+                >
+                  {isSplitMode ? "🔪 Split Mode ON" : "🔪 Split Mode"}
+                </Button>
+                <Button
+                  onClick={resetSplits}
+                  size="sm"
+                  variant="outline"
+                  disabled={splitPoints.length === 0}
+                >
+                  Reset Splits
+                </Button>
+                <div className="text-sm text-gray-500">
+                  {splitPoints.length} splits, {videoSections.filter(s => !s.isDeleted).length}/{videoSections.length} sezioni
+                </div>
+              </div>
             </div>
 
             {/* Main Timeline Bar */}
             <div className="space-y-2">
-              <span className="text-xs text-gray-400">Timeline</span>
+              <div className="flex items-center justify-between">
+                <span className="text-xs text-gray-400">
+                  {isSplitMode ? "Timeline - Click per fare split" : "Timeline"}
+                </span>
+                <div className="text-xs text-gray-500">
+                  Durata finale: {((videoSections.filter(s => !s.isDeleted).reduce((acc, s) => acc + (s.endTime - s.startTime), 0)) / 60).toFixed(1)} min
+                </div>
+              </div>
               <div
-                className="w-full h-8 bg-gray-200 rounded-full cursor-pointer relative"
+                className={`w-full h-8 rounded-full cursor-pointer relative ${
+                  isSplitMode ? "bg-orange-100" : "bg-gray-200"
+                }`}
                 onClick={handleTimelineClick}
               >
+                {/* Render video sections */}
+                {videoSections.map((section) => (
+                  <div
+                    key={section.id}
+                    className={`absolute top-0 h-full ${
+                      section.isDeleted 
+                        ? "bg-red-200 opacity-50" 
+                        : "bg-green-200"
+                    } border-l border-r border-gray-400`}
+                    style={{
+                      left: `${(section.startTime / duration) * 100}%`,
+                      width: `${((section.endTime - section.startTime) / duration) * 100}%`,
+                    }}
+                    title={`Section ${section.startTime.toFixed(1)}s - ${section.endTime.toFixed(1)}s ${section.isDeleted ? "(DELETED)" : ""}`}
+                    onContextMenu={(e) => {
+                      e.preventDefault();
+                      setContextMenu({
+                        x: e.clientX,
+                        y: e.clientY,
+                        sectionId: section.id
+                      });
+                    }}
+                  >
+                    {section.isDeleted && (
+                      <div className="absolute inset-0 flex items-center justify-center text-xs text-red-600 font-bold">
+                        DELETED
+                      </div>
+                    )}
+                  </div>
+                ))}
+                
+                {/* Split point markers */}
+                {splitPoints.map((point) => (
+                  <div
+                    key={`split-${point}`}
+                    className="absolute top-0 h-full w-0.5 bg-orange-600"
+                    style={{ left: `${(point / duration) * 100}%` }}
+                    title={`Split at ${point.toFixed(1)}s`}
+                  />
+                ))}
+                
+                {/* Current progress bar */}
                 <div
-                  className="h-full bg-blue-600 rounded-full"
+                  className="h-full bg-blue-600 bg-opacity-30 rounded-full"
                   style={{ width: `${(currentTime / duration) * 100}%` }}
                 />
+                
+                {/* Current time marker */}
                 <div
-                  className="absolute top-0 h-full w-1 bg-blue-800 rounded"
+                  className="absolute top-0 h-full w-1 bg-blue-800 rounded z-10"
                   style={{ left: `${(currentTime / duration) * 100}%` }}
                 />
               </div>
@@ -1012,6 +1340,46 @@ export default function EditPage() {
           )}
         </div>
       </div>
+
+      {/* Context Menu */}
+      {contextMenu && (
+        <div
+          className="fixed bg-white shadow-lg rounded-lg border py-2 z-50"
+          style={{
+            left: contextMenu.x,
+            top: contextMenu.y,
+          }}
+          onMouseLeave={() => setContextMenu(null)}
+        >
+          {(() => {
+            const section = videoSections.find(s => s.id === contextMenu.sectionId);
+            if (!section) return null;
+            
+            return (
+              <div>
+                <div className="px-4 py-1 text-xs text-gray-500 border-b">
+                  Sezione {section.startTime.toFixed(1)}s - {section.endTime.toFixed(1)}s
+                </div>
+                {section.isDeleted ? (
+                  <button
+                    className="w-full px-4 py-2 text-left hover:bg-gray-100 text-green-600"
+                    onClick={() => restoreSection(section.id)}
+                  >
+                    ↺ Ripristina Sezione
+                  </button>
+                ) : (
+                  <button
+                    className="w-full px-4 py-2 text-left hover:bg-gray-100 text-red-600"
+                    onClick={() => deleteSection(section.id)}
+                  >
+                    🗑️ Elimina Sezione
+                  </button>
+                )}
+              </div>
+            );
+          })()}
+        </div>
+      )}
     </div>
   );
 }
