@@ -183,8 +183,10 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Save AI-generated focus segments if available
+    // Save AI-generated focus segments and cut segments if available
     let savedFocusSegments = 0
+    let savedCutSegments = 0
+    let savedSpeedRecommendations = 0
     if (aiEditingResult && aiEditingResult.focusSegments && aiEditingResult.focusSegments.length > 0) {
       console.log(`Saving ${aiEditingResult.focusSegments.length} AI-generated focus segments`)
       
@@ -222,6 +224,76 @@ export async function POST(request: NextRequest) {
         }
       }
       
+      // Save AI-generated cut segments if available
+      if (aiEditingResult.cutSegments && aiEditingResult.cutSegments.length > 0) {
+        console.log(`Saving ${aiEditingResult.cutSegments.length} AI-generated cut segments...`)
+        
+        for (const cutSegment of aiEditingResult.cutSegments) {
+          try {
+            const { error: cutError } = await supabase
+              .from('cut_segments')
+              .insert({
+                room_id: roomData.id,
+                start_time: cutSegment.startTime,
+                end_time: cutSegment.endTime,
+                reason: cutSegment.reason,
+                confidence: cutSegment.confidence,
+                ai_generated: true,
+                user_approved: null, // AI suggestion, not yet approved by user
+                segment_type: cutSegment.segmentType,
+                created_by: 'ai_system',
+                applied: false // Start as not applied, user can approve/apply
+              })
+
+            if (cutError) {
+              console.error(`Failed to save cut segment:`, cutError)
+              errors.push(`Failed to save cut segment: ${cutError.message}`)
+            } else {
+              savedCutSegments++
+            }
+          } catch (error) {
+            console.error(`Error saving cut segment:`, error)
+            errors.push(`Error saving cut segment: ${error instanceof Error ? error.message : 'Unknown error'}`)
+          }
+        }
+        
+        console.log(`Saved ${savedCutSegments}/${aiEditingResult.cutSegments.length} cut segments`)
+      }
+      
+      // Save speed recommendations if available
+      if (aiEditingResult.speedRecommendations && aiEditingResult.speedRecommendations.length > 0) {
+        console.log(`Saving ${aiEditingResult.speedRecommendations.length} speed recommendations...`)
+        
+        for (const speedRec of aiEditingResult.speedRecommendations) {
+          try {
+            const { error: speedError } = await supabase
+              .from('speed_recommendations')
+              .insert({
+                room_id: roomData.id,
+                start_time: speedRec.startTime,
+                end_time: speedRec.endTime,
+                speed: speedRec.speed,
+                reason: speedRec.reason,
+                confidence: speedRec.confidence,
+                recommendation_type: speedRec.type,
+                ai_generated: true
+              })
+
+            if (speedError) {
+              console.error(`Failed to save speed recommendation:`, speedError)
+              errors.push(`Failed to save speed recommendation: ${speedError.message}`)
+            } else {
+              savedSpeedRecommendations++
+            }
+          } catch (error) {
+            console.error(`Error saving speed recommendation:`, error)
+            errors.push(`Error saving speed recommendation: ${error instanceof Error ? error.message : 'Unknown error'}`)
+          }
+        }
+        
+        console.log(`Saved ${savedSpeedRecommendations}/${aiEditingResult.speedRecommendations.length} speed recommendations`)
+      }
+      
       // Also save the AI editing metadata
       try {
         const { error: aiEditError } = await supabase
@@ -251,10 +323,12 @@ export async function POST(request: NextRequest) {
       savedRecordings: savedRecordings.length,
       savedTranscriptions: savedTranscriptions.length,
       savedFocusSegments: savedFocusSegments,
+      savedCutSegments: savedCutSegments || 0,
+      savedSpeedRecommendations: savedSpeedRecommendations || 0,
       recordings: savedRecordings,
       transcriptions: savedTranscriptions,
       errors: errors.length > 0 ? errors : undefined,
-      message: `${savedRecordings.length} registrazioni, ${savedTranscriptions.length} trascrizioni${savedFocusSegments > 0 ? ` e ${savedFocusSegments} focus segments AI` : ''} salvate con successo`
+      message: `${savedRecordings.length} registrazioni, ${savedTranscriptions.length} trascrizioni${savedFocusSegments > 0 ? `, ${savedFocusSegments} focus segments AI` : ''}${savedCutSegments > 0 ? `, ${savedCutSegments} cut segments AI` : ''}${savedSpeedRecommendations > 0 ? ` e ${savedSpeedRecommendations} raccomandazioni velocità AI` : ''} salvate con successo`
     })
 
   } catch (error) {

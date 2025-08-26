@@ -72,13 +72,59 @@ CREATE TABLE ai_editing_sessions (
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 
+-- Tabella per le raccomandazioni di velocità AI (senza cuts)
+CREATE TABLE speed_recommendations (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  room_id UUID REFERENCES rooms(id) ON DELETE CASCADE,
+  start_time FLOAT NOT NULL,
+  end_time FLOAT NOT NULL,
+  speed FLOAT NOT NULL CHECK (speed > 0), -- 0.25-4.0 = playback speed (no cuts)
+  reason TEXT,
+  confidence FLOAT,
+  recommendation_type TEXT CHECK (recommendation_type IN ('accelerate', 'slow_down')),
+  ai_generated BOOLEAN DEFAULT true,
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Tabella per i segmenti tagliati/eliminati (AI + utente)
+CREATE TABLE cut_segments (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  room_id UUID REFERENCES rooms(id) ON DELETE CASCADE,
+  start_time FLOAT NOT NULL,
+  end_time FLOAT NOT NULL,
+  reason TEXT, -- Motivo del taglio (es. "silence", "filler_words", "user_manual")
+  confidence FLOAT, -- Solo per AI, NULL per tagli utente
+  ai_generated BOOLEAN DEFAULT false, -- true se proposto dall'AI
+  user_approved BOOLEAN DEFAULT NULL, -- NULL = non ancora deciso, true = accettato, false = rifiutato
+  segment_type TEXT CHECK (segment_type IN ('silence', 'filler_words', 'repetition', 'low_energy', 'user_manual')),
+  created_by TEXT DEFAULT 'user', -- 'ai_system' or 'user' or user_id
+  applied BOOLEAN DEFAULT true, -- Se il taglio è attualmente applicato
+  created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
 -- Indici per performance
 CREATE INDEX idx_focus_segments_room_id ON focus_segments(room_id);
 CREATE INDEX idx_focus_segments_time ON focus_segments(start_time, end_time);
 CREATE INDEX idx_focus_segments_ai_generated ON focus_segments(ai_generated);
 CREATE INDEX idx_ai_editing_sessions_room_id ON ai_editing_sessions(room_id);
+CREATE INDEX idx_speed_recommendations_room_id ON speed_recommendations(room_id);
+CREATE INDEX idx_speed_recommendations_time ON speed_recommendations(start_time, end_time);
+CREATE INDEX idx_cut_segments_room_id ON cut_segments(room_id);
+CREATE INDEX idx_cut_segments_time ON cut_segments(start_time, end_time);
+CREATE INDEX idx_cut_segments_ai_generated ON cut_segments(ai_generated);
+CREATE INDEX idx_cut_segments_applied ON cut_segments(applied);
 
--- Trigger per aggiornare updated_at sui focus segments
+-- Triggers per aggiornare updated_at
 CREATE TRIGGER update_focus_segments_updated_at 
 BEFORE UPDATE ON focus_segments 
+FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_speed_recommendations_updated_at 
+BEFORE UPDATE ON speed_recommendations 
+FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
+
+CREATE TRIGGER update_cut_segments_updated_at 
+BEFORE UPDATE ON cut_segments 
 FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();

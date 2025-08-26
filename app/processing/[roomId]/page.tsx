@@ -222,7 +222,7 @@ export default function ProcessingPage() {
         updateStep('ai-edit', 'error', 'AI editing fallito - continuo senza focus automatici')
       } else {
         const aiEditData = await aiEditResponse.json()
-        updateStep('ai-edit', 'completed', `${aiEditData.result.focusSegments.length} focus segments generati automaticamente`)
+        updateStep('ai-edit', 'completed', `${aiEditData.result.focusSegments.length} focus segments e ${aiEditData.result.speedRecommendations?.length || 0} raccomandazioni velocità generati automaticamente`)
         // Store AI editing results for the save step
         transcribeData.aiEditingResult = aiEditData.result
       }

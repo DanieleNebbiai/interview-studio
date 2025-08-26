@@ -58,6 +58,7 @@ interface VideoSection {
   startTime: number;
   endTime: number;
   isDeleted: boolean;
+  playbackSpeed: number; // 1.0 = normal, 0.5 = half speed, 2.0 = double speed
 }
 
 export default function EditPage() {
@@ -93,7 +94,7 @@ export default function EditPage() {
   const [splitPoints, setSplitPoints] = useState<number[]>([]);
   const [videoSections, setVideoSections] = useState<VideoSection[]>([]);
   const [isSplitMode, setIsSplitMode] = useState<boolean>(false);
-  const [contextMenu, setContextMenu] = useState<{x: number; y: number; sectionId: string} | null>(null);
+  const [contextMenu, setContextMenu] = useState<{x: number; y: number; sectionId: string; openUpward?: boolean} | null>(null);
 
   // Calculate cut offsets based on recording start timestamps (with created_at fallback)
   // These offsets are used to automatically "cut" the beginning of videos to synchronize their start points
@@ -109,9 +110,18 @@ export default function EditPage() {
     // Try recording_started_at first, fallback to created_at
     const recordingsWithTimestamps = recordings.filter(r => r.recording_started_at || r.created_at);
     
-    if (recordingsWithTimestamps.length < 2) {
-      console.log('Not enough timestamps for auto-cut synchronization');
+    if (recordingsWithTimestamps.length < 1) {
+      console.log('No recordings with timestamps found');
       return {};
+    }
+    
+    if (recordingsWithTimestamps.length < 2) {
+      console.log('Only one recording found, no synchronization needed');
+      // Return zero offset for the single recording
+      const singleOffset: { [recordingId: string]: number } = {};
+      singleOffset[recordingsWithTimestamps[0].id] = 0;
+      setSyncOffsets(singleOffset);
+      return singleOffset;
     }
 
     // Determine which timestamp to use and log the source
@@ -124,11 +134,23 @@ export default function EditPage() {
       const timestampStr = r.recording_started_at || r.created_at!;
       const timestamp = new Date(timestampStr).getTime();
       console.log(`Recording ${r.id}: ${timestampStr} -> ${timestamp}ms`);
+      
+      // Validate timestamp
+      if (!isFinite(timestamp) || timestamp <= 0) {
+        console.error(`Invalid timestamp for recording ${r.id}: ${timestampStr} -> ${timestamp}ms`);
+        return null;
+      }
+      
       return {
         id: r.id,
         timestamp
       };
-    });
+    }).filter(t => t !== null) as Array<{id: string, timestamp: number}>;
+    
+    if (timestamps.length === 0) {
+      console.error('No valid timestamps found');
+      return {};
+    }
     
     const latestTime = Math.max(...timestamps.map(t => t.timestamp));
     console.log(`Latest time (sync reference): ${latestTime}ms (${new Date(latestTime).toISOString()})`);
@@ -183,16 +205,29 @@ export default function EditPage() {
         const maxDuration = Math.max(
           ...data.recordings.map((r: Recording) => r.duration)
         );
-        const maxOffset = Math.max(...Object.values(offsets));
-        const adjustedDuration = maxDuration - maxOffset;
-        setDuration(adjustedDuration);
         
-        // Initialize with one full section (0 to adjustedDuration)
+        // Handle case where offsets might be empty
+        const offsetValues = Object.values(offsets);
+        const maxOffset = offsetValues.length > 0 ? Math.max(...offsetValues) : 0;
+        const adjustedDuration = maxDuration - maxOffset;
+        
+        // Validate duration before setting
+        const finalDuration = isFinite(adjustedDuration) && adjustedDuration > 0 ? adjustedDuration : maxDuration;
+        setDuration(finalDuration);
+        
+        if (finalDuration === adjustedDuration) {
+          console.log(`Set duration to ${finalDuration}s (maxDuration: ${maxDuration}s, maxOffset: ${maxOffset}s)`);
+        } else {
+          console.error(`Invalid duration calculation: ${adjustedDuration} (maxDuration: ${maxDuration}, maxOffset: ${maxOffset}), using fallback: ${finalDuration}s`);
+        }
+        
+        // Initialize with one full section (0 to finalDuration)
         setVideoSections([{
-          id: `section-0-${adjustedDuration}`,
+          id: `section-0-${finalDuration}`,
           startTime: 0,
-          endTime: adjustedDuration,
-          isDeleted: false
+          endTime: finalDuration,
+          isDeleted: false,
+          playbackSpeed: 1.0
         }]);
       } else {
         throw new Error("No recordings found for this room");
@@ -218,6 +253,13 @@ export default function EditPage() {
       }
       
       const data = await response.json();
+      
+      // Debug: Log all data from API
+      console.log('=== AI SEGMENTS API RESPONSE ===');
+      console.log('focusSegments:', data.focusSegments?.length || 0);
+      console.log('speedRecommendations:', data.speedRecommendations?.length || 0);
+      console.log('cutSegments:', data.cutSegments?.length || 0);
+      console.log('Full response:', data);
       
       if (data.focusSegments && data.focusSegments.length > 0) {
         // Convert AI focus segments to the format expected by the editor
@@ -271,6 +313,113 @@ export default function EditPage() {
           setAiRecommendations(data.aiEditingSession.ai_recommendations);
         }
       }
+
+      // Apply AI cut segments and speed recommendations if available
+      let allAIRecommendations: Array<{
+        start_time: number;
+        end_time: number;
+        speed: number;
+        reason: string;
+        confidence: number;
+        type: string;
+      }> = [];
+
+      // Add cut segments as speed recommendations with speed = 0
+      if (data.cutSegments && data.cutSegments.length > 0) {
+        console.log(`Found ${data.cutSegments.length} AI cut segments:`, data.cutSegments);
+        const cutRecommendations = data.cutSegments
+          .filter((cut: any) => {
+            // Apply AI suggestions unless user explicitly rejected them
+            const shouldApply = cut.user_approved !== false && cut.ai_generated === true;
+            console.log(`Cut segment ${cut.start_time}-${cut.end_time}: applied=${cut.applied}, user_approved=${cut.user_approved}, ai_generated=${cut.ai_generated}, shouldApply=${shouldApply}`);
+            return shouldApply;
+          })
+          .map((cut: any) => ({
+            start_time: cut.start_time,
+            end_time: cut.end_time,
+            speed: 0, // Cut = speed 0
+            reason: cut.reason,
+            confidence: cut.confidence,
+            type: 'cut'
+          }));
+        console.log(`Converted ${cutRecommendations.length} cut segments to recommendations:`, cutRecommendations);
+        allAIRecommendations.push(...cutRecommendations);
+      } else {
+        console.log('No cut segments found in API response');
+      }
+
+      // Add speed recommendations
+      if (data.speedRecommendations && data.speedRecommendations.length > 0) {
+        console.log(`Found ${data.speedRecommendations.length} AI speed recommendations`);
+        allAIRecommendations.push(...data.speedRecommendations);
+      }
+
+      if (allAIRecommendations.length > 0) {
+        console.log(`Applying ${allAIRecommendations.length} total AI recommendations (cuts + speed changes)`);
+        
+        // Sort all recommendations by start time
+        const sortedRecommendations = [...allAIRecommendations].sort((a, b) => a.start_time - b.start_time);
+        
+        // Only apply AI recommendations if we have the default single section
+        if (videoSections.length === 1 && videoSections[0].startTime === 0 && videoSections[0].endTime === duration) {
+          console.log('Applying AI recommendations (cuts + speed changes) using split/delete actions');
+          
+          // Collect all split points from recommendations (both cuts and speed changes)
+          const aiSplitPoints: number[] = [];
+          for (const rec of sortedRecommendations) {
+            if (rec.start_time > 0 && !aiSplitPoints.includes(rec.start_time)) {
+              aiSplitPoints.push(rec.start_time);
+            }
+            if (rec.end_time < duration && !aiSplitPoints.includes(rec.end_time)) {
+              aiSplitPoints.push(rec.end_time);
+            }
+          }
+          
+          // Apply splits first
+          setSplitPoints(aiSplitPoints.sort((a, b) => a - b));
+          
+          // Create sections based on splits (same logic as createSplitAtTime)
+          const newSections: VideoSection[] = [];
+          const allPoints = [0, ...aiSplitPoints.sort((a, b) => a - b), duration];
+          
+          for (let i = 0; i < allPoints.length - 1; i++) {
+            const start = allPoints[i];
+            const end = allPoints[i + 1];
+            
+            // Find if this section matches any AI recommendation (cut or speed change)
+            const matchingRec = sortedRecommendations.find(rec => 
+              Math.abs(start - rec.start_time) < 0.1 && 
+              Math.abs(end - rec.end_time) < 0.1
+            );
+            
+            let isDeleted = false;
+            let playbackSpeed = 1.0;
+            
+            if (matchingRec) {
+              isDeleted = matchingRec.speed === 0; // Cut segments have speed = 0
+              playbackSpeed = matchingRec.speed === 0 ? 1.0 : matchingRec.speed;
+              
+              const actionType = matchingRec.type === 'cut' ? 'CUT' : `${playbackSpeed}x speed`;
+              console.log(`AI: Section ${start.toFixed(1)}s-${end.toFixed(1)}s -> ${actionType} (${matchingRec.reason})`);
+            }
+            
+            newSections.push({
+              id: `section-${start}-${end}`,
+              startTime: start,
+              endTime: end,
+              isDeleted: isDeleted,
+              playbackSpeed: playbackSpeed
+            });
+          }
+          
+          setVideoSections(newSections);
+          const cutSections = newSections.filter(s => s.isDeleted).length;
+          const speedSections = newSections.filter(s => !s.isDeleted && s.playbackSpeed !== 1.0).length;
+          console.log(`Applied AI recommendations: ${newSections.length} sections created (${cutSections} cuts, ${speedSections} speed changes)`);
+        } else {
+          console.log('Video sections already customized, keeping existing sections');
+        }
+      }
       
       setAiSegmentsLoaded(true);
       
@@ -280,7 +429,7 @@ export default function EditPage() {
     } finally {
       setLoadingAISegments(false);
     }
-  }, [roomId, editData, aiSegmentsLoaded]);
+  }, [roomId, editData, aiSegmentsLoaded, duration, videoSections]);
 
   useEffect(() => {
     fetchEditData();
@@ -308,7 +457,14 @@ export default function EditPage() {
     if (newIsPlaying) {
       console.log("=== PLAYING WITH AUTO-CUT SYNC ===");
       // First, sync all videos to current time (applying cut offsets)
-      syncAllVideosToTime(currentTime);
+      // Validate currentTime before syncing
+      if (!isFinite(currentTime) || currentTime < 0) {
+        console.error(`Invalid currentTime in togglePlay: ${currentTime}, resetting to 0`);
+        setCurrentTime(0);
+        syncAllVideosToTime(0);
+      } else {
+        syncAllVideosToTime(currentTime);
+      }
       
       // Small delay to ensure seeking completes before playing
       setTimeout(() => {
@@ -366,14 +522,40 @@ export default function EditPage() {
 
   // Sync all videos to a specific time, applying cut offsets (videos start from their offset point)
   const syncAllVideosToTime = useCallback((time: number) => {
+    // Validate input time
+    if (!isFinite(time) || time < 0) {
+      console.error(`Invalid time value: ${time}`);
+      return;
+    }
+    
     console.log(`Syncing all videos to time: ${time}s with cut offsets`);
     Object.entries(videoRefs.current).forEach(([recordingId, video]) => {
       if (video) {
         // Apply cut offset - video time = timeline time + its starting offset
         const offset = syncOffsets[recordingId] || 0;
+        
+        // Validate offset
+        if (!isFinite(offset)) {
+          console.error(`Invalid offset for video ${recordingId}: ${offset}`);
+          return;
+        }
+        
         const videoTime = time + offset;
         
-        video.currentTime = videoTime;
+        // Validate final video time
+        if (!isFinite(videoTime) || videoTime < 0) {
+          console.error(`Invalid video time for ${recordingId}: ${videoTime} (time: ${time}, offset: ${offset})`);
+          return;
+        }
+        
+        // Ensure video time doesn't exceed video duration
+        if (video.duration && videoTime > video.duration) {
+          console.warn(`Video time ${videoTime}s exceeds duration ${video.duration}s for ${recordingId}, clamping to duration`);
+          video.currentTime = video.duration;
+        } else {
+          video.currentTime = videoTime;
+        }
+        
         console.log(`Video ${recordingId}: timeline ${time}s -> video time ${videoTime}s (cut offset: ${offset}s)`);
       }
     });
@@ -461,6 +643,12 @@ export default function EditPage() {
     const clickX = event.clientX - rect.left;
     const percentage = clickX / rect.width;
     const clickTime = percentage * duration;
+    
+    // Validate click time before proceeding
+    if (!isFinite(clickTime) || clickTime < 0 || clickTime > duration) {
+      console.error(`Invalid click time: ${clickTime} (percentage: ${percentage}, duration: ${duration})`);
+      return;
+    }
 
     if (isSplitMode) {
       // Split mode - create split point
@@ -493,11 +681,15 @@ export default function EditPage() {
           
           // Seek to start of closest section
           const seekTime = closest.startTime;
-          setCurrentTime(seekTime);
-          syncAllVideosToTime(seekTime);
+          if (isFinite(seekTime) && seekTime >= 0) {
+            setCurrentTime(seekTime);
+            syncAllVideosToTime(seekTime);
+          } else {
+            console.error(`Invalid seek time: ${seekTime}`);
+          }
         }
       } else {
-        // Normal seek to available section
+        // Normal seek to available section - already validated clickTime above
         setCurrentTime(clickTime);
         syncAllVideosToTime(clickTime);
       }
@@ -658,7 +850,8 @@ export default function EditPage() {
         id: `section-${start}-${end}`,
         startTime: start,
         endTime: end,
-        isDeleted: existingSection?.isDeleted || false
+        isDeleted: existingSection?.isDeleted || false,
+        playbackSpeed: existingSection?.playbackSpeed || 1.0
       });
     }
     
@@ -688,13 +881,26 @@ export default function EditPage() {
     );
   };
 
+  const setPlaybackSpeed = (sectionId: string, speed: number) => {
+    setVideoSections(prev => 
+      prev.map(section => 
+        section.id === sectionId 
+          ? { ...section, playbackSpeed: speed }
+          : section
+      )
+    );
+    setContextMenu(null);
+    console.log(`Set playback speed for section ${sectionId}: ${speed}x`);
+  };
+
   const resetSplits = () => {
     setSplitPoints([]);
     setVideoSections([{
       id: `section-0-${duration}`,
       startTime: 0,
       endTime: duration,
-      isDeleted: false
+      isDeleted: false,
+      playbackSpeed: 1.0
     }]);
     console.log('All splits reset');
   };
@@ -741,8 +947,17 @@ export default function EditPage() {
             // Apply initial cut offset - start video from its offset point
             const offset = syncOffsets[recording.id] || 0;
             const initialVideoTime = currentTime + offset;
-            video.currentTime = initialVideoTime;
-            console.log(`Video ${recording.id}: applying cut offset ${offset}s, starting at ${initialVideoTime}s`);
+            
+            // Validate before setting currentTime
+            if (isFinite(initialVideoTime) && initialVideoTime >= 0) {
+              // Clamp to video duration if necessary
+              const clampedTime = Math.min(initialVideoTime, video.duration || initialVideoTime);
+              video.currentTime = clampedTime;
+              console.log(`Video ${recording.id}: applying cut offset ${offset}s, starting at ${clampedTime}s`);
+            } else {
+              console.error(`Invalid initial video time for ${recording.id}: ${initialVideoTime} (currentTime: ${currentTime}, offset: ${offset})`);
+              video.currentTime = 0; // Fallback to start
+            }
           }}
           onTimeUpdate={(e) => {
             const video = e.currentTarget;
@@ -752,14 +967,37 @@ export default function EditPage() {
               // Convert video time back to timeline time (remove the cut offset)
               const videoTime = video.currentTime;
               const offset = syncOffsets[recording.id] || 0;
+              
+              // Validate values before calculation
+              if (!isFinite(videoTime) || !isFinite(offset)) {
+                console.error(`Invalid values in onTimeUpdate for ${recording.id}: videoTime=${videoTime}, offset=${offset}`);
+                return;
+              }
+              
               const timelineTime = videoTime - offset;
               
-              setCurrentTime(timelineTime);
+              // Validate timeline time before setting
+              if (isFinite(timelineTime) && timelineTime >= 0) {
+                setCurrentTime(timelineTime);
+              } else {
+                console.error(`Invalid timeline time for ${recording.id}: ${timelineTime} (videoTime: ${videoTime}, offset: ${offset})`);
+                return;
+              }
               
-              // Check if current timeline time is in a deleted section
+              // Check current section and apply playback speed
               const currentSection = videoSections.find(section => 
                 timelineTime >= section.startTime && timelineTime < section.endTime
               );
+              
+              // Apply playback speed for current section
+              if (currentSection && !currentSection.isDeleted) {
+                Object.values(videoRefs.current).forEach((video) => {
+                  if (video && video.playbackRate !== currentSection.playbackSpeed) {
+                    video.playbackRate = currentSection.playbackSpeed;
+                    console.log(`Applied playback speed ${currentSection.playbackSpeed}x to section ${currentSection.startTime.toFixed(1)}s-${currentSection.endTime.toFixed(1)}s`);
+                  }
+                });
+              }
               
               if (currentSection && currentSection.isDeleted && isPlaying) {
                 // Find next non-deleted section
@@ -768,8 +1006,13 @@ export default function EditPage() {
                   .sort((a, b) => a.startTime - b.startTime)[0];
                 
                 if (nextSection) {
-                  console.log(`Skipping deleted section ${currentSection.startTime.toFixed(1)}s-${currentSection.endTime.toFixed(1)}s, jumping to ${nextSection.startTime.toFixed(1)}s`);
-                  syncAllVideosToTime(nextSection.startTime);
+                  const jumpTime = nextSection.startTime;
+                  if (isFinite(jumpTime) && jumpTime >= 0) {
+                    console.log(`Skipping deleted section ${currentSection.startTime.toFixed(1)}s-${currentSection.endTime.toFixed(1)}s, jumping to ${jumpTime.toFixed(1)}s`);
+                    syncAllVideosToTime(jumpTime);
+                  } else {
+                    console.error(`Invalid jump time: ${jumpTime}`);
+                  }
                 } else {
                   // No more sections, pause video
                   console.log('Reached end of non-deleted sections, pausing video');
@@ -1030,8 +1273,22 @@ export default function EditPage() {
                 <span className="text-xs text-gray-400">
                   {isSplitMode ? "Timeline - Click per fare split" : "Timeline"}
                 </span>
-                <div className="text-xs text-gray-500">
-                  Durata finale: {((videoSections.filter(s => !s.isDeleted).reduce((acc, s) => acc + (s.endTime - s.startTime), 0)) / 60).toFixed(1)} min
+                <div className="text-xs text-gray-500 flex items-center gap-4">
+                  <span>Durata finale: {((videoSections.filter(s => !s.isDeleted).reduce((acc, s) => acc + (s.endTime - s.startTime), 0)) / 60).toFixed(1)} min</span>
+                  <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-1">
+                      <div className="w-3 h-3 bg-green-200 rounded-sm"></div>
+                      <span>1x</span>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <div className="w-3 h-3 bg-orange-200 rounded-sm"></div>
+                      <span>&lt;1x</span>
+                    </div>
+                    <div className="flex items-center gap-1">
+                      <div className="w-3 h-3 bg-blue-200 rounded-sm"></div>
+                      <span>&gt;1x</span>
+                    </div>
+                  </div>
                 </div>
               </div>
               <div
@@ -1047,27 +1304,47 @@ export default function EditPage() {
                     className={`absolute top-0 h-full ${
                       section.isDeleted 
                         ? "bg-red-200 opacity-50" 
-                        : "bg-green-200"
+                        : section.playbackSpeed !== 1.0 
+                          ? section.playbackSpeed < 1.0 
+                            ? "bg-orange-200" // Slow sections
+                            : "bg-blue-200"   // Fast sections
+                          : "bg-green-200"    // Normal speed sections
                     } border-l border-r border-gray-400`}
                     style={{
                       left: `${(section.startTime / duration) * 100}%`,
                       width: `${((section.endTime - section.startTime) / duration) * 100}%`,
                     }}
-                    title={`Section ${section.startTime.toFixed(1)}s - ${section.endTime.toFixed(1)}s ${section.isDeleted ? "(DELETED)" : ""}`}
+                    title={`Section ${section.startTime.toFixed(1)}s - ${section.endTime.toFixed(1)}s${section.isDeleted ? " (DELETED)" : ` - Velocità: ${section.playbackSpeed}x`}`}
                     onContextMenu={(e) => {
                       e.preventDefault();
+                      
+                      // Calculate if menu should open upward
+                      const windowHeight = window.innerHeight;
+                      const clickY = e.clientY;
+                      const estimatedMenuHeight = 400; // Approximate menu height with speed options
+                      const shouldOpenUpward = clickY + estimatedMenuHeight > windowHeight;
+                      
                       setContextMenu({
                         x: e.clientX,
                         y: e.clientY,
-                        sectionId: section.id
+                        sectionId: section.id,
+                        openUpward: shouldOpenUpward
                       });
                     }}
                   >
-                    {section.isDeleted && (
+                    {section.isDeleted ? (
                       <div className="absolute inset-0 flex items-center justify-center text-xs text-red-600 font-bold">
                         DELETED
                       </div>
-                    )}
+                    ) : section.playbackSpeed !== 1.0 ? (
+                      <div className="absolute inset-0 flex items-center justify-center text-xs font-bold">
+                        <span className={`${
+                          section.playbackSpeed < 1.0 ? 'text-orange-700' : 'text-blue-700'
+                        }`}>
+                          {section.playbackSpeed}x
+                        </span>
+                      </div>
+                    ) : null}
                   </div>
                 ))}
                 
@@ -1344,10 +1621,15 @@ export default function EditPage() {
       {/* Context Menu */}
       {contextMenu && (
         <div
-          className="fixed bg-white shadow-lg rounded-lg border py-2 z-50"
+          className={`fixed bg-white shadow-lg rounded-lg border py-2 z-50 transform transition-all duration-200 ${
+            contextMenu.openUpward ? 'origin-bottom' : 'origin-top'
+          }`}
           style={{
             left: contextMenu.x,
-            top: contextMenu.y,
+            ...(contextMenu.openUpward 
+              ? { bottom: window.innerHeight - contextMenu.y + 10 } // Open upward with 10px margin
+              : { top: contextMenu.y } // Normal downward opening
+            ),
           }}
           onMouseLeave={() => setContextMenu(null)}
         >
@@ -1357,8 +1639,14 @@ export default function EditPage() {
             
             return (
               <div>
-                <div className="px-4 py-1 text-xs text-gray-500 border-b">
-                  Sezione {section.startTime.toFixed(1)}s - {section.endTime.toFixed(1)}s
+                <div className="px-4 py-1 text-xs text-gray-500 border-b flex items-center justify-between">
+                  <span>Sezione {section.startTime.toFixed(1)}s - {section.endTime.toFixed(1)}s</span>
+                  {contextMenu.openUpward && (
+                    <span className="text-xs text-gray-400">▲</span>
+                  )}
+                  {!contextMenu.openUpward && (
+                    <span className="text-xs text-gray-400">▼</span>
+                  )}
                 </div>
                 {section.isDeleted ? (
                   <button
@@ -1368,12 +1656,35 @@ export default function EditPage() {
                     ↺ Ripristina Sezione
                   </button>
                 ) : (
-                  <button
-                    className="w-full px-4 py-2 text-left hover:bg-gray-100 text-red-600"
-                    onClick={() => deleteSection(section.id)}
-                  >
-                    🗑️ Elimina Sezione
-                  </button>
+                  <div>
+                    {/* Current playback speed indicator */}
+                    <div className="px-4 py-1 text-xs text-gray-400 border-b">
+                      Velocità: {section.playbackSpeed}x
+                    </div>
+                    
+                    {/* Speed options */}
+                    <div className="border-b mb-1">
+                      <div className="px-3 py-1 text-xs text-gray-500">Velocità riproduzione:</div>
+                      {[0.25, 0.5, 0.75, 1.0, 1.1, 1.2, 1.3, 1.5, 2.0, 4.0].map((speed) => (
+                        <button
+                          key={speed}
+                          className={`w-full px-4 py-1 text-left hover:bg-gray-100 text-sm ${
+                            section.playbackSpeed === speed ? 'bg-blue-50 text-blue-600 font-medium' : 'text-gray-700'
+                          }`}
+                          onClick={() => setPlaybackSpeed(section.id, speed)}
+                        >
+                          {speed === 1.0 ? '🎬' : speed < 1.0 ? '🐌' : '⚡'} {speed}x {speed === 1.0 ? '(normale)' : ''}
+                        </button>
+                      ))}
+                    </div>
+                    
+                    <button
+                      className="w-full px-4 py-2 text-left hover:bg-gray-100 text-red-600"
+                      onClick={() => deleteSection(section.id)}
+                    >
+                      🗑️ Elimina Sezione
+                    </button>
+                  </div>
                 )}
               </div>
             );

@@ -28,9 +28,38 @@ interface FocusSegment {
   type: 'monologue' | 'conversation' | 'silence'
 }
 
+interface SpeedRecommendation {
+  startTime: number
+  endTime: number
+  speed: number
+  reason: string
+  confidence: number
+  type: 'accelerate' | 'slow_down'
+}
+
+interface CutSegment {
+  id: string
+  startTime: number
+  endTime: number
+  reason: string
+  confidence: number
+  segmentType: 'silence' | 'filler_words' | 'repetition' | 'low_energy' | 'gap'
+}
+
+interface ValidSegment {
+  startTime: number
+  endTime: number
+  reason: string
+  confidence: number
+  quality: 'high' | 'medium' | 'low'
+}
+
 interface AIEditingResult {
   roomId: string
   focusSegments: FocusSegment[]
+  speedRecommendations: SpeedRecommendation[]
+  cutSegments: CutSegment[]
+  validSegments: ValidSegment[]
   totalDuration: number
   analysisConfidence: number
   aiRecommendations: string[]
@@ -70,13 +99,20 @@ export async function POST(request: NextRequest) {
     
     const focusSegments = await generateFocusSegments(openai, combinedAnalysis, transcriptions)
     
+    // Process AI analysis results
+    const totalDuration = Math.max(...transcriptions.map((t: Transcription) => t.duration))
+    const validSegments = processValidSegments(combinedAnalysis.validSegments || [], totalDuration)
+    const cutSegments = generateCutSegments(validSegments, totalDuration)
+    const speedRecommendations = processSpeedRecommendations(combinedAnalysis.speedRecommendations || [], totalDuration)
+    
     const aiRecommendations = generateEditingRecommendations(combinedAnalysis, focusSegments)
 
-    const totalDuration = Math.max(...transcriptions.map((t: Transcription) => t.duration))
-    
     const result: AIEditingResult = {
       roomId,
       focusSegments,
+      speedRecommendations,
+      cutSegments,
+      validSegments,
       totalDuration,
       analysisConfidence: combinedAnalysis.confidence,
       aiRecommendations,
@@ -85,11 +121,14 @@ export async function POST(request: NextRequest) {
 
     console.log(`AI editing analysis completed in ${result.processingTime}ms`)
     console.log(`Generated ${focusSegments.length} focus segments`)
+    console.log(`Generated ${validSegments.length} valid segments to keep`)
+    console.log(`Generated ${cutSegments.length} cut segments to remove`)
+    console.log(`Generated ${speedRecommendations.length} speed recommendations`)
 
     return NextResponse.json({
       success: true,
       result,
-      message: `AI editing completato: ${focusSegments.length} segmenti focus generati`
+      message: `AI editing completato: ${validSegments.length} segmenti validi, ${cutSegments.length} segmenti da tagliare, ${focusSegments.length} focus e ${speedRecommendations.length} raccomandazioni velocità generati`
     })
 
   } catch (error) {
@@ -112,7 +151,7 @@ async function analyzeConversationFlow(
     .join('\n\n')
 
   const analysisPrompt = `
-Analizza questa conversazione tra più partecipanti e identifica i pattern di comunicazione:
+Analizza questa conversazione tra più partecipanti e identifica i pattern di comunicazione per ottimizzare l'editing video:
 
 ${fullConversationText}
 
@@ -123,7 +162,15 @@ Fornisci un'analisi strutturata in formato JSON con:
 4. "keyMoments": array di momenti importanti con timestamp approssimativi
 5. "energyLevels": valutazione dell'energia della conversazione nel tempo
 6. "focusRecommendations": raccomandazioni per i focus segments
-7. "confidence": livello di confidenza dell'analisi (0-1)
+7. "validSegments": array dei segmenti da MANTENERE nel video finale:
+   - Identifica solo le parti di conversazione interessanti, utili, coinvolgenti
+   - Tutto il resto verrà automaticamente tagliato
+   - Formato: {"startTime": seconds, "endTime": seconds, "reason": string, "confidence": 0-1, "quality": "high"|"medium"|"low"}
+   - Esempi di segmenti validi: risposte articolate, spiegazioni, momenti chiave, storytelling
+8. "speedRecommendations": array per modificare velocità dei segmenti validi:
+   - Solo per accelerare (1.1x-4x) o rallentare (0.25x-0.75x) i segmenti validi
+   - Formato: {"startTime": seconds, "endTime": seconds, "speed": number, "reason": string, "confidence": 0-1}
+9. "confidence": livello di confidenza dell'analisi (0-1)
 
 Rispondi SOLO con JSON valido, senza altro testo.`
 
@@ -159,6 +206,7 @@ Rispondi SOLO con JSON valido, senza altro testo.`
       keyMoments: [],
       energyLevels: 'medium',
       focusRecommendations: [],
+      speedRecommendations: [],
       confidence: 0.5
     }
   }
@@ -335,6 +383,141 @@ Rispondi SOLO con JSON nel formato:
   }
 
   return { focus: false, reason: 'Not substantial enough for focus', confidence: 0.6, type: 'conversation' }
+}
+
+function processValidSegments(
+  validSegments: any[],
+  totalDuration: number
+): ValidSegment[] {
+  if (!validSegments || !Array.isArray(validSegments)) {
+    return []
+  }
+
+  return validSegments
+    .filter((seg: any) => {
+      // Validate segment structure
+      return seg.startTime !== undefined && 
+             seg.endTime !== undefined && 
+             seg.startTime < seg.endTime &&
+             seg.startTime >= 0 &&
+             seg.endTime <= totalDuration &&
+             seg.reason && 
+             seg.confidence >= 0 && seg.confidence <= 1 &&
+             ['high', 'medium', 'low'].includes(seg.quality)
+    })
+    .map((seg: any): ValidSegment => ({
+      startTime: seg.startTime,
+      endTime: seg.endTime,
+      reason: seg.reason,
+      confidence: seg.confidence,
+      quality: seg.quality
+    }))
+    .sort((a, b) => a.startTime - b.startTime) // Sort by start time
+}
+
+function generateCutSegments(
+  validSegments: ValidSegment[],
+  totalDuration: number
+): CutSegment[] {
+  const cutSegments: CutSegment[] = []
+  let currentTime = 0
+
+  // Sort valid segments by start time
+  const sortedValidSegments = [...validSegments].sort((a, b) => a.startTime - b.startTime)
+
+  // Handle case where there are no valid segments - cut everything
+  if (sortedValidSegments.length === 0) {
+    cutSegments.push({
+      id: `cut_entire_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+      startTime: 0,
+      endTime: totalDuration,
+      reason: 'No valid content segments identified - entire video marked for removal',
+      confidence: 0.9,
+      segmentType: 'low_energy'
+    })
+    return cutSegments
+  }
+
+  for (let i = 0; i < sortedValidSegments.length; i++) {
+    const validSegment = sortedValidSegments[i]
+    
+    // Create cut segment from currentTime to start of valid segment
+    if (currentTime < validSegment.startTime) {
+      const cutDuration = validSegment.startTime - currentTime
+      let reason = 'gap'
+      let segmentType: CutSegment['segmentType'] = 'gap'
+      
+      // Determine cut reason based on duration and position
+      if (cutDuration > 10) {
+        reason = 'Long silence or irrelevant content'
+        segmentType = 'silence'
+      } else if (cutDuration > 3) {
+        reason = 'Pause or filler content'
+        segmentType = 'low_energy'
+      } else {
+        reason = 'Brief gap between content'
+        segmentType = 'gap'
+      }
+
+      cutSegments.push({
+        id: `cut_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+        startTime: currentTime,
+        endTime: validSegment.startTime,
+        reason,
+        confidence: 0.8, // High confidence for auto-generated cuts
+        segmentType
+      })
+    }
+    
+    // Update currentTime to end of valid segment
+    currentTime = validSegment.endTime
+  }
+
+  // Create final cut segment from last valid segment to end of video
+  if (currentTime < totalDuration) {
+    cutSegments.push({
+      id: `cut_final_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
+      startTime: currentTime,
+      endTime: totalDuration,
+      reason: 'End of content - trailing silence or irrelevant material',
+      confidence: 0.8,
+      segmentType: 'silence'
+    })
+  }
+
+  return cutSegments
+}
+
+function processSpeedRecommendations(
+  speedRecommendations: any[],
+  totalDuration: number
+): SpeedRecommendation[] {
+  if (!speedRecommendations || !Array.isArray(speedRecommendations)) {
+    return []
+  }
+
+  return speedRecommendations
+    .filter((rec: any) => {
+      // Validate recommendation structure - no more cuts here, only speed changes
+      return rec.startTime !== undefined && 
+             rec.endTime !== undefined && 
+             rec.startTime < rec.endTime &&
+             rec.startTime >= 0 &&
+             rec.endTime <= totalDuration &&
+             typeof rec.speed === 'number' &&
+             rec.speed > 0 && // No cuts (speed = 0) allowed here
+             rec.reason && 
+             rec.confidence >= 0 && rec.confidence <= 1
+    })
+    .map((rec: any): SpeedRecommendation => ({
+      startTime: rec.startTime,
+      endTime: rec.endTime,
+      speed: rec.speed,
+      reason: rec.reason,
+      confidence: rec.confidence,
+      type: rec.speed < 1.0 ? 'slow_down' as const : 'accelerate' as const
+    }))
+    .sort((a, b) => a.startTime - b.startTime) // Sort by start time
 }
 
 function generateEditingRecommendations(

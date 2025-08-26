@@ -35,11 +35,14 @@ export async function GET(request: NextRequest) {
     )
 
     // Get room data first
+    console.log(`Looking for room with daily_room_name: ${roomId}`)
     const { data: roomData, error: roomError } = await supabase
       .from('rooms')
       .select('id')
       .eq('daily_room_name', roomId)
       .single()
+
+    console.log(`Room query result:`, { roomData, roomError })
 
     if (roomError || !roomData) {
       console.error('Room not found:', roomId, roomError)
@@ -71,6 +74,39 @@ export async function GET(request: NextRequest) {
       )
     }
 
+    // Get speed recommendations for this room
+    const { data: speedRecommendations, error: speedError } = await supabase
+      .from('speed_recommendations')
+      .select('*')
+      .eq('room_id', roomData.id)
+      .order('start_time', { ascending: true })
+
+    if (speedError) {
+      console.error('Error fetching speed recommendations:', speedError)
+      return NextResponse.json(
+        { error: 'Failed to fetch speed recommendations' },
+        { status: 500 }
+      )
+    }
+
+    // Get cut segments for this room
+    console.log(`Fetching cut segments for room_id: ${roomData.id}`)
+    const { data: cutSegments, error: cutError } = await supabase
+      .from('cut_segments')
+      .select('*')
+      .eq('room_id', roomData.id)
+      .order('start_time', { ascending: true })
+
+    console.log(`Cut segments query result:`, { cutSegments, cutError })
+
+    if (cutError) {
+      console.error('Error fetching cut segments:', cutError)
+      return NextResponse.json(
+        { error: 'Failed to fetch cut segments' },
+        { status: 500 }
+      )
+    }
+
     // Get AI editing session data for recommendations
     const { data: aiSession, error: aiSessionError } = await supabase
       .from('ai_editing_sessions')
@@ -84,12 +120,17 @@ export async function GET(request: NextRequest) {
       console.error('Error fetching AI editing session:', aiSessionError)
     }
 
-    return NextResponse.json({
+    const response = {
       success: true,
       focusSegments: focusSegments || [],
+      speedRecommendations: speedRecommendations || [],
+      cutSegments: cutSegments || [],
       aiEditingSession: aiSession,
-      message: `${focusSegments?.length || 0} focus segments trovati`
-    })
+      message: `${focusSegments?.length || 0} focus segments, ${speedRecommendations?.length || 0} raccomandazioni velocità e ${cutSegments?.length || 0} segmenti da tagliare trovati`
+    }
+    
+    console.log(`API Response:`, response)
+    return NextResponse.json(response)
 
   } catch (error) {
     console.error('Error fetching focus segments:', error)
