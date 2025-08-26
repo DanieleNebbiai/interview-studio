@@ -164,7 +164,7 @@ async function convertVideoToAudio(videoBuffer: Buffer, recordingId: string): Pr
     writeFileSync(tempVideoPath, videoBuffer)
     
     console.log(`Converting video to audio: ${tempVideoPath} -> ${tempAudioPath}`)
-    console.log('Current FFmpeg path:', ffmpeg().options.ffmpegPath || 'not set')
+    console.log('FFmpeg command initialized for conversion')
     
     // Convert video to audio using ffmpeg
     await new Promise<void>((resolve, reject) => {
@@ -322,14 +322,20 @@ export async function POST(request: NextRequest) {
           console.log(`Audio conversion completed in ${conversionTime}ms, size reduced from ${videoBuffer.length} to ${audioBuffer.length} bytes`)
           
           // Create audio File object
-          audioFile = new File([audioBuffer], `recording-${recording.id}.mp3`, {
+          const audioArrayBuffer = new ArrayBuffer(audioBuffer.length)
+          const view = new Uint8Array(audioArrayBuffer)
+          view.set(audioBuffer)
+          audioFile = new File([audioArrayBuffer], `recording-${recording.id}.mp3`, {
             type: 'audio/mp3'
           })
         } catch (conversionError) {
           console.warn(`Audio conversion failed for ${recording.id}, falling back to original video:`, conversionError)
           // Fallback to original video if conversion fails
           audioBuffer = videoBuffer
-          audioFile = new File([audioBuffer], recording.filename || `recording-${recording.id}.mp4`, {
+          const fallbackArrayBuffer = new ArrayBuffer(audioBuffer.length)
+          const fallbackView = new Uint8Array(fallbackArrayBuffer)
+          fallbackView.set(audioBuffer)
+          audioFile = new File([fallbackArrayBuffer], recording.filename || `recording-${recording.id}.mp4`, {
             type: 'video/mp4'
           })
         }
@@ -393,6 +399,10 @@ export async function POST(request: NextRequest) {
             console.log(`Retrying in ${Math.round(delayMs)}ms... (attempt ${retryCount}/${maxRetries})`)
             await new Promise(resolve => setTimeout(resolve, delayMs))
           }
+        }
+
+        if (!transcriptionResponse) {
+          throw new Error('Transcription response is undefined after all retry attempts')
         }
 
         console.log(`Transcription completed. Duration: ${transcriptionResponse.duration}s`)

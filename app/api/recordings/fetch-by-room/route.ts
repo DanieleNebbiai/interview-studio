@@ -54,7 +54,7 @@ export async function POST(request: NextRequest) {
 
       const recordingsData = await response.json()
       console.log('Daily.co recordings response:', recordingsData)
-      console.log('Available recordings:', recordingsData.data?.map((r: any) => ({
+      console.log('Available recordings:', recordingsData.data?.map((r: Record<string, unknown>) => ({
         id: r.id,
         status: r.status,
         start_ts: r.start_ts,
@@ -65,7 +65,7 @@ export async function POST(request: NextRequest) {
       const errors: string[] = []
 
       // Process only finished recordings
-      const finishedRecordings = recordingsData.data?.filter((r: any) => r.status === 'finished') || []
+      const finishedRecordings = recordingsData.data?.filter((r: Record<string, unknown>) => r.status === 'finished') || []
       
       console.log(`Found ${finishedRecordings.length} finished recordings`)
 
@@ -109,9 +109,9 @@ export async function POST(request: NextRequest) {
       }
 
       // If we have recordings in other statuses, note them
-      const processingRecordings = recordingsData.data?.filter((r: any) => r.status !== 'finished') || []
+      const processingRecordings = recordingsData.data?.filter((r: Record<string, unknown>) => r.status !== 'finished') || []
       if (processingRecordings.length > 0) {
-        console.log(`Found ${processingRecordings.length} recordings still processing:`, processingRecordings.map(r => ({
+        console.log(`Found ${processingRecordings.length} recordings still processing:`, processingRecordings.map((r: Record<string, unknown>) => ({
           id: r.id,
           status: r.status
         })))

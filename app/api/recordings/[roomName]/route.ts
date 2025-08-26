@@ -25,16 +25,19 @@ export async function GET(
 
     const data = await response.json()
 
-    const processedRecordings = data.recordings?.map((recording: any) => ({
-      id: recording.id,
-      roomName: recording.room_name,
-      status: recording.status,
-      startTime: recording.start_time,
-      duration: recording.duration,
-      downloadUrl: recording.download_url,
-      participants: recording.participants || [],
-      thumbnail: recording.preview_url,
-    })) || []
+    const processedRecordings = data.recordings?.map((recording: unknown) => {
+      const rec = recording as Record<string, unknown>;
+      return {
+        id: rec.id,
+        roomName: rec.room_name,
+        status: rec.status,
+        startTime: rec.start_time,
+        duration: rec.duration,
+        downloadUrl: rec.download_url,
+        participants: rec.participants || [],
+        thumbnail: rec.preview_url,
+      };
+    }) || []
 
     return NextResponse.json({
       recordings: processedRecordings,

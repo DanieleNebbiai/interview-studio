@@ -78,7 +78,7 @@ export async function POST(request: NextRequest) {
       const recordingsData = await response.json()
       console.log('Daily.co recordings response:', recordingsData)
       console.log('Looking for instanceIds:', recordings.map(r => r.instanceId))
-      console.log('Available recordings:', recordingsData.data?.map((r: any) => ({
+      console.log('Available recordings:', recordingsData.data?.map((r: Record<string, unknown>) => ({
         id: r.id,
         instanceId: r.instanceId,
         status: r.status,
@@ -88,9 +88,9 @@ export async function POST(request: NextRequest) {
 
       // Since Daily.co doesn't return instanceId in the response, we'll use the most recent finished recording
       // for this room as a fallback, or try to match by room and timing
-      const finishedRecordings = recordingsData.data?.filter((r: any) => r.status === 'finished') || []
+      const finishedRecordings = recordingsData.data?.filter((r: Record<string, unknown>) => r.status === 'finished') || []
       
-      console.log('Found finished recordings:', finishedRecordings.map(r => ({
+      console.log('Found finished recordings:', finishedRecordings.map((r: Record<string, unknown>) => ({
         id: r.id,
         status: r.status,
         start_ts: r.start_ts
@@ -100,7 +100,7 @@ export async function POST(request: NextRequest) {
       for (const recording of recordings as RecordingInstance[]) {
         // First try exact match by instanceId if available
         let matchingRecording = recordingsData.data?.find(
-          (r: any) => r.instanceId === recording.instanceId || r.id === recording.instanceId
+          (r: Record<string, unknown>) => r.instanceId === recording.instanceId || r.id === recording.instanceId
         )
         
         // If no exact match and we have finished recordings, use the most recent one
