@@ -221,11 +221,12 @@ export function buildFFmpegCommand(data: {
     const duration = (validSections[0].endTime - validSections[0].startTime).toFixed(2)
     console.log(`⏱️ Seeking to ${startTime}s, duration ${duration}s`)
     
+    // Fix: Use output seeking instead of input seeking for better accuracy
     command
-      .seekInput(startTime)
+      .seek(startTime)
       .duration(duration)
     
-    // TEMP: Skip all complex filtering - use simple seek/duration
+    // TEMP: Skip all complex filtering - use simple seek/duration approach
     console.log('⚠️ Skipping complex filters - using simple seek/duration approach')
     
     // Output settings with explicit codecs for compatibility
