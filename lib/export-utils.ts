@@ -252,6 +252,13 @@ function getVideoBitrate(quality: string): string {
 
 // Upload file to S3/R2
 export async function uploadToS3(filePath: string, key: string): Promise<string> {
+  console.log('🔍 R2 Configuration:', {
+    endpoint: process.env.R2_ENDPOINT,
+    bucket: BUCKET_NAME,
+    hasAccessKey: !!process.env.R2_ACCESS_KEY_ID,
+    hasSecretKey: !!process.env.R2_SECRET_ACCESS_KEY,
+  })
+  
   try {
     const fileContent = fs.readFileSync(filePath)
     
