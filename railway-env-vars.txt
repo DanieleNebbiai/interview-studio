@@ -1,0 +1,18 @@
+# Environment variables for Railway deployment
+# Copy these to Railway dashboard
+
+# Supabase Configuration
+NEXT_PUBLIC_SUPABASE_URL=https://omvroqjcvwfvzdfjloii.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6Im9tdnJvcWpjdndmdnpkZmpsb2lpIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc1NTg0NTEyMiwiZXhwIjoyMDcxNDIxMTIyfQ.-bNKIkeL56w0qX6i5jiEMgPab6_JkJLzWAEepSXl5es
+
+# Cloudflare R2 Configuration
+R2_ENDPOINT=https://55c955ba9bb570ed273d9d7ff49ee37e.r2.cloudflarestorage.com
+R2_ACCESS_KEY_ID=28a12628c79e240aa6f1b5b5105c46b2
+R2_SECRET_ACCESS_KEY=08dea5c0ef459811c3573e35ec668cff18ea569bd7f085e09dc71c83e71c8efa
+R2_BUCKET_NAME=interview-studio-exports
+
+# Worker Configuration
+WORKER_CONCURRENCY=3
+MAX_EXPORT_DURATION=3600
+TEMP_DIR=/tmp
+NODE_ENV=production

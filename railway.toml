@@ -1,0 +1,13 @@
+[build]
+builder = "nixpacks"
+
+[deploy]
+startCommand = "npm run worker:supabase"
+restartPolicyType = "on_failure"
+restartPolicyMaxRetries = 10
+
+[environment]
+NODE_ENV = "production"
+
+[[services]]
+name = "interview-studio-worker"

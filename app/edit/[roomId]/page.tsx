@@ -10,7 +10,9 @@ import {
   VolumeX,
   ArrowLeft,
   MoreHorizontal,
+  Download,
 } from "lucide-react";
+import { useVideoExport, ExportSettings } from "@/hooks/useVideoExport";
 
 interface Recording {
   id: string;
@@ -95,6 +97,10 @@ export default function EditPage() {
   const [videoSections, setVideoSections] = useState<VideoSection[]>([]);
   const [isSplitMode, setIsSplitMode] = useState<boolean>(false);
   const [contextMenu, setContextMenu] = useState<{x: number; y: number; sectionId: string; openUpward?: boolean} | null>(null);
+
+  // Export system
+  const { exportStatus, isExporting, startExport, cancelExport, resetExport } = useVideoExport();
+  const [showExportModal, setShowExportModal] = useState(false);
 
   // Calculate cut offsets based on recording start timestamps (with created_at fallback)
   // These offsets are used to automatically "cut" the beginning of videos to synchronize their start points
@@ -315,7 +321,7 @@ export default function EditPage() {
       }
 
       // Apply AI cut segments and speed recommendations if available
-      let allAIRecommendations: Array<{
+      const allAIRecommendations: Array<{
         start_time: number;
         end_time: number;
         speed: number;
@@ -1131,6 +1137,17 @@ export default function EditPage() {
                 {editData?.recordings?.some(r => r.recording_started_at) ? '' : ' - usando created_at'}
               </div>
             )}
+            
+            {/* Export Button */}
+            <Button
+              onClick={() => setShowExportModal(true)}
+              className="bg-purple-600 hover:bg-purple-700 text-white"
+              disabled={!editData || isExporting}
+            >
+              <Download className="h-4 w-4 mr-2" />
+              {isExporting ? 'Esportando...' : 'Esporta Video'}
+            </Button>
+            
             <Button
               onClick={fetchEditData}
               variant="outline"
@@ -1689,6 +1706,169 @@ export default function EditPage() {
               </div>
             );
           })()}
+        </div>
+      )}
+
+      {/* Export Modal */}
+      {showExportModal && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg shadow-xl p-6 w-full max-w-md mx-4">
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-semibold text-gray-900">
+                Esporta Video
+              </h3>
+              <button
+                onClick={() => setShowExportModal(false)}
+                className="text-gray-400 hover:text-gray-600"
+                disabled={isExporting}
+              >
+                ✕
+              </button>
+            </div>
+
+            {isExporting ? (
+              // Export Progress
+              <div className="space-y-4">
+                <div className="flex items-center space-x-3">
+                  <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-purple-600"></div>
+                  <span className="text-sm text-gray-600">{exportStatus.message}</span>
+                </div>
+                
+                <div className="w-full bg-gray-200 rounded-full h-2">
+                  <div 
+                    className="bg-purple-600 h-2 rounded-full transition-all duration-300"
+                    style={{ width: `${exportStatus.percentage}%` }}
+                  ></div>
+                </div>
+                
+                <div className="text-center">
+                  <p className="text-sm text-gray-500 mb-3">
+                    {exportStatus.percentage}% completato
+                  </p>
+                  <Button
+                    onClick={cancelExport}
+                    variant="outline"
+                    size="sm"
+                  >
+                    Annulla
+                  </Button>
+                </div>
+
+                {exportStatus.stage === 'completed' && exportStatus.downloadUrl && (
+                  <div className="text-center pt-4 border-t">
+                    <p className="text-green-600 mb-2">✅ Export completato!</p>
+                    <Button
+                      onClick={() => {
+                        window.open(exportStatus.downloadUrl!, '_blank')
+                        setShowExportModal(false)
+                        resetExport()
+                      }}
+                      className="bg-green-600 hover:bg-green-700"
+                    >
+                      <Download className="h-4 w-4 mr-2" />
+                      Scarica Video
+                    </Button>
+                  </div>
+                )}
+
+                {exportStatus.stage === 'failed' && (
+                  <div className="text-center pt-4 border-t">
+                    <p className="text-red-600 mb-2">❌ Export fallito</p>
+                    <p className="text-sm text-gray-500 mb-3">{exportStatus.error}</p>
+                    <Button
+                      onClick={() => {
+                        setShowExportModal(false)
+                        resetExport()
+                      }}
+                      variant="outline"
+                    >
+                      Chiudi
+                    </Button>
+                  </div>
+                )}
+              </div>
+            ) : (
+              // Export Settings
+              <div className="space-y-4">
+                <div className="space-y-2">
+                  <label className="text-sm font-medium text-gray-700">
+                    Qualità Video
+                  </label>
+                  <select className="w-full p-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-purple-500 focus:border-transparent">
+                    <option value="720p">720p (Recommended)</option>
+                    <option value="1080p">1080p (High Quality)</option>
+                    <option value="4k">4K (Premium)</option>
+                  </select>
+                </div>
+
+                <div className="space-y-2">
+                  <label className="text-sm font-medium text-gray-700">
+                    Formato
+                  </label>
+                  <select className="w-full p-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-purple-500 focus:border-transparent">
+                    <option value="mp4">MP4 (Recommended)</option>
+                    <option value="webm">WebM</option>
+                  </select>
+                </div>
+
+                <div className="flex items-center space-x-2">
+                  <input
+                    type="checkbox"
+                    id="includeSubtitles"
+                    defaultChecked
+                    className="rounded border-gray-300 text-purple-600 focus:ring-purple-500"
+                  />
+                  <label htmlFor="includeSubtitles" className="text-sm text-gray-700">
+                    Includi sottotitoli
+                  </label>
+                </div>
+
+                <div className="bg-gray-50 p-3 rounded-md">
+                  <div className="text-sm text-gray-600">
+                    <div className="flex justify-between">
+                      <span>Durata originale:</span>
+                      <span>{Math.floor(duration / 60)}:{(duration % 60).toFixed(0).padStart(2, '0')}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Durata finale:</span>
+                      <span>
+                        {Math.floor((videoSections.filter(s => !s.isDeleted).reduce((acc, s) => acc + (s.endTime - s.startTime), 0)) / 60)}:{((videoSections.filter(s => !s.isDeleted).reduce((acc, s) => acc + (s.endTime - s.startTime), 0)) % 60).toFixed(0).padStart(2, '0')}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span>Sezioni eliminate:</span>
+                      <span>{videoSections.filter(s => s.isDeleted).length}</span>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex space-x-3">
+                  <Button
+                    onClick={() => setShowExportModal(false)}
+                    variant="outline"
+                    className="flex-1"
+                  >
+                    Annulla
+                  </Button>
+                  <Button
+                    onClick={() => {
+                      const settings: ExportSettings = {
+                        format: 'mp4',
+                        quality: '720p',
+                        framerate: 30,
+                        includeSubtitles: true
+                      }
+                      startExport(roomId, settings)
+                    }}
+                    className="flex-1 bg-purple-600 hover:bg-purple-700"
+                  >
+                    <Download className="h-4 w-4 mr-2" />
+                    Inizia Export
+                  </Button>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       )}
     </div>
