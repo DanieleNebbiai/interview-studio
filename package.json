@@ -9,7 +9,7 @@
     "worker": "tsx worker.ts",
     "worker:prod": "tsx worker.ts",
     "worker:supabase": "npx tsx worker-supabase.ts",
-    "migrate": "tsx scripts/run-migrations.ts",
+    "migrate": "npx tsx scripts/run-migrations.ts",
     "lint": "eslint"
   },
   "dependencies": {
