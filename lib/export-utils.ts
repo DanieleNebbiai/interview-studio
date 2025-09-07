@@ -198,11 +198,27 @@ export function buildFFmpegCommand(data: {
     
     // TEMP: Simplified approach without complex filters
     console.log('🎬 Using simplified FFmpeg approach for debugging')
+    console.log('📊 Video sections:', validSections)
+    console.log('📊 Input videos:', inputVideos)
+    
+    // Check if input video exists and get its info
+    inputVideos.forEach((video, index) => {
+      try {
+        const stats = fs.statSync(video)
+        console.log(`📁 Input video ${index}: ${video} - Size: ${stats.size} bytes`)
+      } catch (error) {
+        console.error(`❌ Input video ${index} not found: ${video}`, error)
+      }
+    })
     
     // Simple trim without complex filters
+    const startTime = validSections[0].startTime.toFixed(2)
+    const duration = (validSections[0].endTime - validSections[0].startTime).toFixed(2)
+    console.log(`⏱️ Seeking to ${startTime}s, duration ${duration}s`)
+    
     command
-      .seekInput(validSections[0].startTime.toFixed(2))
-      .duration((validSections[0].endTime - validSections[0].startTime).toFixed(2))
+      .seekInput(startTime)
+      .duration(duration)
     
     // TEMP: Skip all complex filtering - use simple seek/duration
     console.log('⚠️ Skipping complex filters - using simple seek/duration approach')
@@ -228,6 +244,19 @@ export function buildFFmpegCommand(data: {
       })
       .on('end', () => {
         console.log('FFmpeg processing completed')
+        
+        // Check output file size
+        try {
+          const outputStats = fs.statSync(outputPath)
+          console.log(`📁 Output video: ${outputPath} - Size: ${outputStats.size} bytes`)
+          
+          if (outputStats.size < 1000) {
+            console.error('⚠️ WARNING: Output file is very small, likely corrupted!')
+          }
+        } catch (error) {
+          console.error('❌ Output file not found:', outputPath, error)
+        }
+        
         resolve(outputPath)
       })
       .on('error', (err) => {
