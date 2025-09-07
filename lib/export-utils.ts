@@ -191,15 +191,21 @@ export function buildFFmpegCommand(data: {
         `${segmentOutputs.join('')}concat=n=${segmentOutputs.length}:v=1:a=1[finalvideo][finalaudio]`
       )
     } else {
-      // Single segment - just pass through with proper labels
-      filterComplex.push(`[v0]copy[finalvideo]`, `[a0]acopy[finalaudio]`)
+      // Single segment - use the outputs directly
+      // No additional filter needed, [v0] becomes [finalvideo], [a0] becomes [finalaudio]
     }
     
     // Add subtitle overlay if requested
     if (subtitleFile && settings.includeSubtitles) {
-      filterComplex.push(`[finalvideo]subtitles=${subtitleFile}[final]`)
-      command.complexFilter(filterComplex.join(';'))
-      command.outputOptions(['-map [final]', '-map [finalaudio]'])
+      if (segmentOutputs.length > 1) {
+        filterComplex.push(`[finalvideo]subtitles=${subtitleFile}[final]`)
+        command.complexFilter(filterComplex.join(';'))
+        command.outputOptions(['-map [final]', '-map [finalaudio]'])
+      } else {
+        filterComplex.push(`[v0]subtitles=${subtitleFile}[final]`)
+        command.complexFilter(filterComplex.join(';'))
+        command.outputOptions(['-map [final]', '-map [a0]'])
+      }
     } else {
       command.complexFilter(filterComplex.join(';'))
       if (segmentOutputs.length > 1) {
