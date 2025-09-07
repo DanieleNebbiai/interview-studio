@@ -196,7 +196,7 @@ export function buildFFmpegCommand(data: {
     }
     
     // Add subtitle overlay if requested
-    if (subtitleFile && settings.includeSubtitles) {
+    if (false && subtitleFile && settings.includeSubtitles) { // TEMP: disable subtitles for debugging
       if (segmentOutputs.length > 1) {
         filterComplex.push(`[finalvideo]subtitles=${subtitleFile}[final]`)
         command.complexFilter(filterComplex.join(';'))
