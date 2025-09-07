@@ -196,25 +196,16 @@ export function buildFFmpegCommand(data: {
       // No additional filter needed, [v0] becomes [finalvideo], [a0] becomes [finalaudio]
     }
     
-    // Add subtitle overlay if requested
-    if (false && subtitleFile && settings.includeSubtitles) { // TEMP: disable subtitles for debugging
-      if (segmentOutputs.length > 1) {
-        filterComplex.push(`[finalvideo]subtitles=${subtitleFile}[final]`)
-        command.complexFilter(filterComplex.join(';'))
-        command.outputOptions(['-map [final]', '-map [finalaudio]'])
-      } else {
-        filterComplex.push(`[v0]subtitles=${subtitleFile}[final]`)
-        command.complexFilter(filterComplex.join(';'))
-        command.outputOptions(['-map [final]', '-map [a0]'])
-      }
-    } else {
-      command.complexFilter(filterComplex.join(';'))
-      if (segmentOutputs.length > 1) {
-        command.outputOptions(['-map [finalvideo]', '-map [finalaudio]'])
-      } else {
-        command.outputOptions(['-map [v0]', '-map [a0]'])
-      }
-    }
+    // TEMP: Simplified approach without complex filters
+    console.log('🎬 Using simplified FFmpeg approach for debugging')
+    
+    // Simple trim without complex filters
+    command
+      .seekInput(validSections[0].startTime.toFixed(2))
+      .duration((validSections[0].endTime - validSections[0].startTime).toFixed(2))
+    
+    // TEMP: Skip all complex filtering - use simple seek/duration
+    console.log('⚠️ Skipping complex filters - using simple seek/duration approach')
     
     // Output settings with explicit codecs for compatibility
     command
