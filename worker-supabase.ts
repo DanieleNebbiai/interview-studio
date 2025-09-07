@@ -13,6 +13,12 @@ console.log('🚀 Starting Supabase-based video export worker...')
 
 // Worker loop
 async function startWorker() {
+  console.log('🔧 Environment check:', {
+    NODE_ENV: process.env.NODE_ENV,
+    SUPABASE_URL: process.env.NEXT_PUBLIC_SUPABASE_URL ? 'SET' : 'MISSING',
+    SUPABASE_KEY: process.env.SUPABASE_SERVICE_ROLE_KEY ? 'SET' : 'MISSING',
+  })
+
   // Debug: check all jobs in database first
   const allJobs = await exportQueue.getAllJobs(10)
   console.log('🔍 All jobs in database:', allJobs.map(j => ({ id: j.id, status: j.status })))
