@@ -243,30 +243,41 @@ export function buildFFmpegCommand(data: {
       .addOption('-pix_fmt', 'yuv420p') // Pixel format for compatibility
       .output(outputPath)
     
-    // Execute command
+    // Execute command with detailed logging
     command
       .on('start', (commandLine) => {
-        console.log('FFmpeg command:', commandLine)
+        console.log('🎬 FFmpeg command:', commandLine)
+        console.log('🎬 FFmpeg started processing...')
+      })
+      .on('progress', (progress) => {
+        console.log('🎬 FFmpeg progress:', JSON.stringify(progress, null, 2))
+      })
+      .on('stderr', (stderrLine) => {
+        console.log('🎬 FFmpeg stderr:', stderrLine)
       })
       .on('end', () => {
-        console.log('FFmpeg processing completed')
+        console.log('🎬 FFmpeg processing completed')
         
         // Check output file size
         try {
           const outputStats = fs.statSync(outputPath)
           console.log(`📁 Output video: ${outputPath} - Size: ${outputStats.size} bytes`)
           
-          if (outputStats.size < 1000) {
-            console.error('⚠️ WARNING: Output file is very small, likely corrupted!')
+          if (outputStats.size < 10000) { // Less than 10KB is definitely corrupted
+            console.error('❌ CRITICAL: Output file is extremely small, likely corrupted!')
+            console.error('❌ This suggests FFmpeg failed to process the video properly')
           }
         } catch (error) {
           console.error('❌ Output file not found:', outputPath, error)
+          reject(new Error(`Output file not created: ${error}`))
+          return
         }
         
         resolve(outputPath)
       })
       .on('error', (err) => {
-        console.error('FFmpeg error:', err)
+        console.error('❌ FFmpeg error:', err)
+        console.error('❌ FFmpeg process failed with error:', err.message)
         reject(err)
       })
       .run()
