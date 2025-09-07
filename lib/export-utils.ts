@@ -198,14 +198,19 @@ export function buildFFmpegCommand(data: {
     
     // TEMP: Simplified approach without complex filters
     console.log('🎬 Using simplified FFmpeg approach for debugging')
-    console.log('📊 Video sections:', validSections)
-    console.log('📊 Input videos:', inputVideos)
+    console.log('📊 Video sections:', JSON.stringify(validSections, null, 2))
+    console.log('📊 Input videos:', JSON.stringify(inputVideos, null, 2))
     
     // Check if input video exists and get its info
+    console.log('🔍 Checking input videos...')
     inputVideos.forEach((video, index) => {
       try {
         const stats = fs.statSync(video)
         console.log(`📁 Input video ${index}: ${video} - Size: ${stats.size} bytes`)
+        
+        if (stats.size < 100000) { // Less than 100KB is suspicious
+          console.error(`⚠️ WARNING: Input video ${index} is very small (${stats.size} bytes)`)
+        }
       } catch (error) {
         console.error(`❌ Input video ${index} not found: ${video}`, error)
       }
