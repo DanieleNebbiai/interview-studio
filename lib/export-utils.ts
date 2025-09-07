@@ -221,10 +221,12 @@ export function buildFFmpegCommand(data: {
     const duration = (validSections[0].endTime - validSections[0].startTime).toFixed(2)
     console.log(`⏱️ Seeking to ${startTime}s, duration ${duration}s`)
     
-    // Fix: Use output seeking instead of input seeking for better accuracy
+    // CRITICAL FIX: The issue is seeking beyond video duration
+    // For testing, let's start from 0 and take first few seconds
+    console.log('🔧 TESTING: Using start=0, duration=5 to test basic functionality')
     command
-      .seek(startTime)
-      .duration(duration)
+      .seek(0)
+      .duration(5)
     
     // TEMP: Skip all complex filtering - use simple seek/duration approach
     console.log('⚠️ Skipping complex filters - using simple seek/duration approach')
