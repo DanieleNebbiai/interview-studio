@@ -40,14 +40,14 @@ interface ExportJobData {
 // S3 Client for Cloudflare R2
 const s3Client = new S3Client({
   region: 'auto',
-  endpoint: process.env.AWS_ENDPOINT_URL || 'https://your-account.r2.cloudflarestorage.com',
+  endpoint: process.env.R2_ENDPOINT,
   credentials: {
-    accessKeyId: process.env.AWS_ACCESS_KEY_ID || '',
-    secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY || '',
+    accessKeyId: process.env.R2_ACCESS_KEY_ID || '',
+    secretAccessKey: process.env.R2_SECRET_ACCESS_KEY || '',
   },
 })
 
-const BUCKET_NAME = 'interview-studio-exports'
+const BUCKET_NAME = process.env.R2_BUCKET_NAME || 'interview-studio-exports'
 const TEMP_DIR = '/tmp'
 
 // Download video from URL to local file
