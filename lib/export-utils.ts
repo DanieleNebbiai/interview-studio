@@ -40,11 +40,12 @@ interface ExportJobData {
 // S3 Client for Cloudflare R2
 const s3Client = new S3Client({
   region: 'auto',
-  endpoint: process.env.R2_ENDPOINT,
+  endpoint: process.env.R2_ENDPOINT || 'https://55c955ba9bb570ed273d9d7ff49ee37e.r2.cloudflarestorage.com',
   credentials: {
     accessKeyId: process.env.R2_ACCESS_KEY_ID || '',
     secretAccessKey: process.env.R2_SECRET_ACCESS_KEY || '',
   },
+  forcePathStyle: true, // Required for R2
 })
 
 const BUCKET_NAME = process.env.R2_BUCKET_NAME || 'interview-studio-exports'
