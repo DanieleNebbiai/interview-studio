@@ -158,24 +158,24 @@ export function buildFFmpegCommand(data: {
         // Focus mode - show only focused video
         const focusIndex = 0 // For now, focus on first video (can be improved)
         filterComplex.push(
-          `[${focusIndex}:v]trim=${section.startTime}:${section.endTime},setpts=PTS/${speed}[v${index}]`,
-          `[${focusIndex}:a]atrim=${section.startTime}:${section.endTime},asetpts=PTS/${speed}[a${index}]`
+          `[${focusIndex}:v]trim=${section.startTime.toFixed(2)}:${section.endTime.toFixed(2)},setpts=PTS/${speed}[v${index}]`,
+          `[${focusIndex}:a]atrim=${section.startTime.toFixed(2)}:${section.endTime.toFixed(2)},asetpts=PTS/${speed}[a${index}]`
         )
       } else {
         // Grid mode - show all videos
         if (inputVideos.length === 1) {
           filterComplex.push(
-            `[0:v]trim=${section.startTime}:${section.endTime},setpts=PTS/${speed}[v${index}]`,
-            `[0:a]atrim=${section.startTime}:${section.endTime},asetpts=PTS/${speed}[a${index}]`
+            `[0:v]trim=${section.startTime.toFixed(2)}:${section.endTime.toFixed(2)},setpts=PTS/${speed}[v${index}]`,
+            `[0:a]atrim=${section.startTime.toFixed(2)}:${section.endTime.toFixed(2)},asetpts=PTS/${speed}[a${index}]`
           )
         } else if (inputVideos.length === 2) {
           // 2-video grid
           filterComplex.push(
-            `[0:v]trim=${section.startTime}:${section.endTime},setpts=PTS/${speed},scale=960:540[v0_${index}]`,
-            `[1:v]trim=${section.startTime}:${section.endTime},setpts=PTS/${speed},scale=960:540[v1_${index}]`,
+            `[0:v]trim=${section.startTime.toFixed(2)}:${section.endTime.toFixed(2)},setpts=PTS/${speed},scale=960:540[v0_${index}]`,
+            `[1:v]trim=${section.startTime.toFixed(2)}:${section.endTime.toFixed(2)},setpts=PTS/${speed},scale=960:540[v1_${index}]`,
             `[v0_${index}][v1_${index}]hstack[v${index}]`,
-            `[0:a]atrim=${section.startTime}:${section.endTime},asetpts=PTS/${speed}[a0_${index}]`,
-            `[1:a]atrim=${section.startTime}:${section.endTime},asetpts=PTS/${speed}[a1_${index}]`,
+            `[0:a]atrim=${section.startTime.toFixed(2)}:${section.endTime.toFixed(2)},asetpts=PTS/${speed}[a0_${index}]`,
+            `[1:a]atrim=${section.startTime.toFixed(2)}:${section.endTime.toFixed(2)},asetpts=PTS/${speed}[a1_${index}]`,
             `[a0_${index}][a1_${index}]amix=inputs=2[a${index}]`
           )
         }
