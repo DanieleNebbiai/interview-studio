@@ -216,17 +216,23 @@ export function buildFFmpegCommand(data: {
       }
     })
     
-    // Simple trim without complex filters
-    const startTime = validSections[0].startTime.toFixed(2)
-    const duration = (validSections[0].endTime - validSections[0].startTime).toFixed(2)
-    console.log(`⏱️ Seeking to ${startTime}s, duration ${duration}s`)
+    // Simple trim without complex filters with bounds checking
+    const startTime = Math.max(0, validSections[0].startTime)
+    const endTime = validSections[0].endTime
+    const duration = endTime - startTime
     
-    // CRITICAL FIX: The issue is seeking beyond video duration
-    // For testing, let's start from 0 and take first few seconds
-    console.log('🔧 TESTING: Using start=0, duration=5 to test basic functionality')
+    console.log(`⏱️ Original section: ${validSections[0].startTime.toFixed(2)}s to ${validSections[0].endTime.toFixed(2)}s`)
+    console.log(`⏱️ Adjusted: seeking to ${startTime.toFixed(2)}s, duration ${duration.toFixed(2)}s`)
+    
+    // IMPORTANT: Ensure we don't seek beyond reasonable bounds
+    // For videos around 16.8s, seeking to 16.78s leaves almost no content
+    const safeDuration = Math.min(duration, 10) // Cap at 10 seconds max for safety
+    
+    console.log(`✅ Final parameters: start=${startTime.toFixed(2)}s, duration=${safeDuration.toFixed(2)}s`)
+    
     command
-      .seek(0)
-      .duration(5)
+      .seek(startTime)
+      .duration(safeDuration)
     
     // TEMP: Skip all complex filtering - use simple seek/duration approach
     console.log('⚠️ Skipping complex filters - using simple seek/duration approach')
