@@ -216,12 +216,18 @@ export function buildFFmpegCommand(data: {
       }
     }
     
-    // Output settings
+    // Output settings with explicit codecs for compatibility
     command
       .format(settings.format)
+      .videoCodec('libx264') // H.264 for broad compatibility
+      .audioCodec('aac')     // AAC for broad compatibility
       .videoBitrate(getVideoBitrate(settings.quality))
       .audioBitrate('128k')
       .fps(settings.framerate)
+      .addOption('-preset', 'fast') // Faster encoding
+      .addOption('-profile:v', 'high') // High profile for better compatibility
+      .addOption('-level', '4.0') // Level 4.0 for compatibility
+      .addOption('-pix_fmt', 'yuv420p') // Pixel format for compatibility
       .output(outputPath)
     
     // Execute command
