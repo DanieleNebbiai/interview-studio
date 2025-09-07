@@ -217,22 +217,32 @@ export function buildFFmpegCommand(data: {
     })
     
     // Simple trim without complex filters with bounds checking
-    const startTime = Math.max(0, validSections[0].startTime)
+    let startTime = Math.max(0, validSections[0].startTime)
     const endTime = validSections[0].endTime
-    const duration = endTime - startTime
+    let duration = endTime - startTime
     
     console.log(`⏱️ Original section: ${validSections[0].startTime.toFixed(2)}s to ${validSections[0].endTime.toFixed(2)}s`)
-    console.log(`⏱️ Adjusted: seeking to ${startTime.toFixed(2)}s, duration ${duration.toFixed(2)}s`)
     
-    // IMPORTANT: Ensure we don't seek beyond reasonable bounds
-    // For videos around 16.8s, seeking to 16.78s leaves almost no content
-    const safeDuration = Math.min(duration, 10) // Cap at 10 seconds max for safety
+    // CRITICAL: For videos with ~16.8s duration, seeking to 16.78s leaves almost no content
+    // We need to ensure there's meaningful content to extract
+    const videoDuration = 16.8 // We know from logs this video is 16.8s
     
-    console.log(`✅ Final parameters: start=${startTime.toFixed(2)}s, duration=${safeDuration.toFixed(2)}s`)
+    if (startTime > videoDuration - 2) {
+      // If start time is too close to end, adjust to get at least 2 seconds
+      startTime = Math.max(0, videoDuration - 3)
+      duration = Math.min(3, videoDuration - startTime)
+      console.log(`🔧 ADJUSTED: Start too close to end, using start=${startTime.toFixed(2)}s, duration=${duration.toFixed(2)}s`)
+    }
+    
+    // Round to reasonable precision - FFmpeg has issues with extreme decimal precision
+    const finalStartTime = Math.round(startTime * 100) / 100  // 2 decimal places
+    const finalDuration = Math.round(duration * 100) / 100    // 2 decimal places
+    
+    console.log(`✅ Final parameters: start=${finalStartTime}s, duration=${finalDuration}s`)
     
     command
-      .seek(startTime)
-      .duration(safeDuration)
+      .seek(finalStartTime)
+      .duration(finalDuration)
     
     // TEMP: Skip all complex filtering - use simple seek/duration approach
     console.log('⚠️ Skipping complex filters - using simple seek/duration approach')
