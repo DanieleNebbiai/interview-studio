@@ -191,7 +191,8 @@ export function buildFFmpegCommand(data: {
         `${segmentOutputs.join('')}concat=n=${segmentOutputs.length}:v=1:a=1[finalvideo][finalaudio]`
       )
     } else {
-      filterComplex.push(`[v0][a0]`)
+      // Single segment - just pass through with proper labels
+      filterComplex.push(`[v0]copy[finalvideo]`, `[a0]acopy[finalaudio]`)
     }
     
     // Add subtitle overlay if requested
