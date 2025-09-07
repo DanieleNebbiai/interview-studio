@@ -8,7 +8,7 @@
     "start": "next start",
     "worker": "tsx worker.ts",
     "worker:prod": "tsx worker.ts",
-    "worker:supabase": "node --loader tsx/esm worker-supabase.ts",
+    "worker:supabase": "npx tsx worker-supabase.ts",
     "migrate": "tsx scripts/run-migrations.ts",
     "lint": "eslint"
   },

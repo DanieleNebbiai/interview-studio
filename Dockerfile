@@ -25,5 +25,5 @@ RUN mkdir -p /tmp && chmod 777 /tmp
 # Expose port (not needed for worker but good practice)
 EXPOSE 3000
 
-# Default command (will be overridden by Railway)
-CMD ["npm", "run", "worker:supabase"]
+# Default command (will be overridden by Railway)  
+CMD ["./node_modules/.bin/tsx", "worker-supabase.ts"]
