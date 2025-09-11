@@ -70,23 +70,42 @@ export async function POST(request: NextRequest) {
       .select('*')
       .in('recording_id', recordings.map(r => r.id))
 
-    // Get video sections (from current editor state - would need to be passed or stored)
-    // For now, create default sections based on cut_segments and speed_recommendations
-    const { data: cutSegments } = await supabase
-      .from('cut_segments')
+    // Get video sections (either AI-generated during processing or user-modified)
+    const { data: videoSectionsData, error: sectionsError } = await supabase
+      .from('video_sections')
       .select('*')
       .eq('room_id', roomData.id)
-      .eq('ai_generated', true)
-      .is('user_approved', null) // Only AI suggestions not rejected
+      .order('start_time')
 
-    const { data: speedRecommendations } = await supabase
-      .from('speed_recommendations')
-      .select('*')
-      .eq('room_id', roomData.id)
+    if (sectionsError) {
+      return NextResponse.json(
+        { error: 'Failed to load video sections' },
+        { status: 500 }
+      )
+    }
 
-    // Build video sections from AI recommendations
-    const maxDuration = Math.max(...recordings.map(r => r.duration || 0))
-    const videoSections = buildVideoSectionsFromAI(cutSegments || [], speedRecommendations || [], maxDuration)
+    let videoSections
+    if (videoSectionsData && videoSectionsData.length > 0) {
+      console.log(`Using video sections: ${videoSectionsData.length} sections`)
+      videoSections = videoSectionsData.map(section => ({
+        id: section.section_id,
+        startTime: section.start_time,
+        endTime: section.end_time,
+        isDeleted: section.is_deleted,
+        playbackSpeed: section.playback_speed
+      }))
+    } else {
+      // Create default single section if none exist
+      const maxDuration = Math.max(...recordings.map(r => r.duration || 0))
+      console.log('No video sections found, creating default single section')
+      videoSections = [{
+        id: `section-0-${maxDuration}`,
+        startTime: 0,
+        endTime: maxDuration,
+        isDeleted: false,
+        playbackSpeed: 1.0
+      }]
+    }
 
     // Get focus segments
     const { data: focusSegments } = await supabase
@@ -150,87 +169,3 @@ export async function POST(request: NextRequest) {
   }
 }
 
-// Helper function to build video sections from AI data
-function buildVideoSectionsFromAI(
-  cutSegments: any[],
-  speedRecommendations: any[],
-  maxDuration: number
-) {
-  // Start with full video
-  let sections = [{
-    id: `section-0-${maxDuration}`,
-    startTime: 0,
-    endTime: maxDuration,
-    isDeleted: false,
-    playbackSpeed: 1.0
-  }]
-
-  // Apply cuts - mark segments as deleted
-  for (const cut of cutSegments) {
-    const newSections = []
-    
-    for (const section of sections) {
-      if (section.isDeleted) {
-        newSections.push(section)
-        continue
-      }
-
-      // Check if cut overlaps with this section
-      if (cut.end_time <= section.startTime || cut.start_time >= section.endTime) {
-        // No overlap
-        newSections.push(section)
-      } else {
-        // Split section around the cut
-        if (cut.start_time > section.startTime) {
-          // Add section before cut
-          newSections.push({
-            id: `section-${section.startTime}-${cut.start_time}`,
-            startTime: section.startTime,
-            endTime: cut.start_time,
-            isDeleted: false,
-            playbackSpeed: section.playbackSpeed
-          })
-        }
-        
-        // Add cut section (deleted)
-        newSections.push({
-          id: `section-${cut.start_time}-${cut.end_time}`,
-          startTime: Math.max(cut.start_time, section.startTime),
-          endTime: Math.min(cut.end_time, section.endTime),
-          isDeleted: true,
-          playbackSpeed: 1.0
-        })
-        
-        if (cut.end_time < section.endTime) {
-          // Add section after cut
-          newSections.push({
-            id: `section-${cut.end_time}-${section.endTime}`,
-            startTime: cut.end_time,
-            endTime: section.endTime,
-            isDeleted: false,
-            playbackSpeed: section.playbackSpeed
-          })
-        }
-      }
-    }
-    
-    sections = newSections
-  }
-
-  // Apply speed recommendations
-  for (const speedRec of speedRecommendations) {
-    sections = sections.map(section => {
-      if (!section.isDeleted &&
-          section.startTime >= speedRec.start_time &&
-          section.endTime <= speedRec.end_time) {
-        return {
-          ...section,
-          playbackSpeed: speedRec.speed
-        }
-      }
-      return section
-    })
-  }
-
-  return sections.sort((a, b) => a.startTime - b.startTime)
-}

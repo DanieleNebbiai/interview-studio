@@ -40,6 +40,91 @@ interface Transcription {
   wordCount: number
 }
 
+// Helper function to build video sections from AI data (copied from export/start)
+function buildVideoSectionsFromAI(
+  cutSegments: any[],
+  speedRecommendations: any[],
+  maxDuration: number
+) {
+  // Start with full video
+  let sections = [{
+    id: `section-0-${maxDuration}`,
+    startTime: 0,
+    endTime: maxDuration,
+    isDeleted: false,
+    playbackSpeed: 1.0
+  }]
+
+  // Apply cuts - mark segments as deleted
+  for (const cut of cutSegments) {
+    const newSections = []
+    
+    for (const section of sections) {
+      if (section.isDeleted) {
+        newSections.push(section)
+        continue
+      }
+
+      // Check if cut overlaps with this section
+      if (cut.end_time <= section.startTime || cut.start_time >= section.endTime) {
+        // No overlap
+        newSections.push(section)
+      } else {
+        // Split section around the cut
+        if (cut.start_time > section.startTime) {
+          // Add section before cut
+          newSections.push({
+            id: `section-${section.startTime}-${cut.start_time}`,
+            startTime: section.startTime,
+            endTime: cut.start_time,
+            isDeleted: false,
+            playbackSpeed: section.playbackSpeed
+          })
+        }
+        
+        // Add cut section (deleted)
+        newSections.push({
+          id: `section-${cut.start_time}-${cut.end_time}`,
+          startTime: Math.max(cut.start_time, section.startTime),
+          endTime: Math.min(cut.end_time, section.endTime),
+          isDeleted: true,
+          playbackSpeed: 1.0
+        })
+        
+        if (cut.end_time < section.endTime) {
+          // Add section after cut
+          newSections.push({
+            id: `section-${cut.end_time}-${section.endTime}`,
+            startTime: cut.end_time,
+            endTime: section.endTime,
+            isDeleted: false,
+            playbackSpeed: section.playbackSpeed
+          })
+        }
+      }
+    }
+    
+    sections = newSections
+  }
+
+  // Apply speed recommendations
+  for (const speedRec of speedRecommendations) {
+    sections = sections.map(section => {
+      if (!section.isDeleted &&
+          section.startTime >= speedRec.start_time &&
+          section.endTime <= speedRec.end_time) {
+        return {
+          ...section,
+          playbackSpeed: speedRec.speed
+        }
+      }
+      return section
+    })
+  }
+
+  return sections.sort((a, b) => a.startTime - b.startTime)
+}
+
 export async function POST(request: NextRequest) {
   try {
     const { roomId, recordings, transcriptions, aiEditingResult } = await request.json()
@@ -183,12 +268,49 @@ export async function POST(request: NextRequest) {
       )
     }
 
-    // Save AI-generated focus segments and cut segments if available
+    // Save AI-generated video sections, focus segments and cut segments if available
+    let savedVideoSections = 0
     let savedFocusSegments = 0
     let savedCutSegments = 0
     let savedSpeedRecommendations = 0
+    
     if (aiEditingResult && aiEditingResult.focusSegments && aiEditingResult.focusSegments.length > 0) {
       console.log(`Saving ${aiEditingResult.focusSegments.length} AI-generated focus segments`)
+      
+      // First, create video sections from AI recommendations
+      const maxDuration = Math.max(...savedRecordings.map(r => r.duration || 0))
+      const videoSections = buildVideoSectionsFromAI(
+        aiEditingResult.cutSegments || [], 
+        aiEditingResult.speedRecommendations || [], 
+        maxDuration
+      )
+      
+      // Save video sections to database
+      if (videoSections.length > 0) {
+        console.log(`Saving ${videoSections.length} AI-generated video sections`)
+        
+        const videoSectionInserts = videoSections.map(section => ({
+          room_id: roomData.id,
+          section_id: section.id,
+          start_time: section.startTime,
+          end_time: section.endTime,
+          is_deleted: section.isDeleted,
+          playback_speed: section.playbackSpeed,
+          created_by: 'ai_system',
+          ai_generated: true,
+          user_modified: false
+        }))
+
+        const { error: sectionsError } = await supabase
+          .from('video_sections')
+          .insert(videoSectionInserts)
+
+        if (sectionsError) {
+          console.error('Failed to save video sections:', sectionsError)
+        } else {
+          savedVideoSections = videoSections.length
+        }
+      }
       
       for (const focusSegment of aiEditingResult.focusSegments) {
         try {
@@ -322,13 +444,14 @@ export async function POST(request: NextRequest) {
       success: true,
       savedRecordings: savedRecordings.length,
       savedTranscriptions: savedTranscriptions.length,
+      savedVideoSections: savedVideoSections || 0,
       savedFocusSegments: savedFocusSegments,
       savedCutSegments: savedCutSegments || 0,
       savedSpeedRecommendations: savedSpeedRecommendations || 0,
       recordings: savedRecordings,
       transcriptions: savedTranscriptions,
       errors: errors.length > 0 ? errors : undefined,
-      message: `${savedRecordings.length} registrazioni, ${savedTranscriptions.length} trascrizioni${savedFocusSegments > 0 ? `, ${savedFocusSegments} focus segments AI` : ''}${savedCutSegments > 0 ? `, ${savedCutSegments} cut segments AI` : ''}${savedSpeedRecommendations > 0 ? ` e ${savedSpeedRecommendations} raccomandazioni velocità AI` : ''} salvate con successo`
+      message: `${savedRecordings.length} registrazioni, ${savedTranscriptions.length} trascrizioni${savedVideoSections > 0 ? `, ${savedVideoSections} sezioni video AI` : ''}${savedFocusSegments > 0 ? `, ${savedFocusSegments} focus segments AI` : ''}${savedCutSegments > 0 ? `, ${savedCutSegments} cut segments AI` : ''}${savedSpeedRecommendations > 0 ? ` e ${savedSpeedRecommendations} raccomandazioni velocità AI` : ''} salvate con successo`
     })
 
   } catch (error) {

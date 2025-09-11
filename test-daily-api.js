@@ -16,7 +16,6 @@ async function testDailyAPI() {
       },
     })
     
-    console.log('\nAPI Response:')
     console.log('Status:', response.status)
     console.log('StatusText:', response.statusText)
     

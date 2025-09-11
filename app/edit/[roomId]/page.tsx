@@ -13,6 +13,7 @@ import {
   Download,
 } from "lucide-react";
 import { useVideoExport, ExportSettings } from "@/hooks/useVideoExport";
+import { useEditSave } from "@/hooks/useEditSave";
 
 interface Recording {
   id: string;
@@ -87,16 +88,20 @@ export default function EditPage() {
   const [dragCurrentTime, setDragCurrentTime] = useState<number | null>(null);
   const [videoErrors, setVideoErrors] = useState<Set<string>>(new Set());
   const [focusedVideo, setFocusedVideo] = useState<string | null>(null);
-  const [aiRecommendations, setAiRecommendations] = useState<string[]>([]);
-  const [loadingAISegments, setLoadingAISegments] = useState(false);
-  const [aiSegmentsLoaded, setAiSegmentsLoaded] = useState(false);
   const [syncOffsets, setSyncOffsets] = useState<{ [recordingId: string]: number }>({});
+  
+  // Video loading tracking for accurate duration calculation
+  const [videosLoaded, setVideosLoaded] = useState<Set<string>>(new Set());
+  const [realVideoDurations, setRealVideoDurations] = useState<{ [recordingId: string]: number }>({});
   
   // Split/Section system
   const [splitPoints, setSplitPoints] = useState<number[]>([]);
   const [videoSections, setVideoSections] = useState<VideoSection[]>([]);
   const [isSplitMode, setIsSplitMode] = useState<boolean>(false);
   const [contextMenu, setContextMenu] = useState<{x: number; y: number; sectionId: string; openUpward?: boolean} | null>(null);
+  
+  // Edit save functionality
+  const { saveEditState, loadEditState, isSaving, lastSaved, saveError } = useEditSave();
 
   // Export system
   const { exportStatus, isExporting, startExport, cancelExport, resetExport } = useVideoExport();
@@ -105,6 +110,51 @@ export default function EditPage() {
   // Calculate cut offsets based on recording start timestamps (with created_at fallback)
   // These offsets are used to automatically "cut" the beginning of videos to synchronize their start points
   // Example: Video A starts at 00:00, Video B starts at 00:02 -> Video A gets 2s cut, both effectively start at 00:02
+  // Calculate real duration based on loaded video elements
+  const updateRealDuration = useCallback(() => {
+    if (!editData) return;
+    
+    const allVideosLoaded = editData.recordings.every(r => videosLoaded.has(r.id));
+    if (!allVideosLoaded) {
+      console.log('⏳ Waiting for all videos to load before calculating real duration');
+      return;
+    }
+    
+    // Get real durations from loaded video elements
+    const realDurations = editData.recordings.map(recording => {
+      const video = videoRefs.current[recording.id];
+      const realDuration = video ? video.duration : recording.duration;
+      console.log(`📹 Video ${recording.id}: DB duration=${recording.duration}s, Real duration=${realDuration}s`);
+      return realDuration;
+    });
+    
+    // Handle sync offsets - subtract max offset from max real duration
+    const offsetValues = Object.values(syncOffsets);
+    const maxOffset = offsetValues.length > 0 ? Math.max(...offsetValues) : 0;
+    const maxRealDuration = Math.max(...realDurations);
+    const finalRealDuration = maxRealDuration - maxOffset;
+    
+    console.log(`🎬 Duration calculation: maxReal=${maxRealDuration}s, maxOffset=${maxOffset}s, final=${finalRealDuration}s`);
+    
+    // Only update if duration actually changed significantly (more than 0.1s difference)
+    if (Math.abs(duration - finalRealDuration) > 0.1) {
+      console.log(`📐 Updating duration from ${duration}s to ${finalRealDuration}s`);
+      setDuration(finalRealDuration);
+      
+      // Update video sections to the new duration if they extend beyond it
+      setVideoSections(prevSections => {
+        const updated = prevSections.map(section => {
+          if (section.endTime > finalRealDuration) {
+            console.log(`✂️ Trimming section ${section.id} from ${section.endTime}s to ${finalRealDuration}s`);
+            return { ...section, endTime: finalRealDuration };
+          }
+          return section;
+        });
+        return updated;
+      });
+    }
+  }, [editData, videosLoaded, syncOffsets, duration, videoRefs]);
+
   const calculateSyncOffsets = useCallback((recordings: Recording[]) => {
     console.log('=== AUTO-CUT OFFSET CALCULATION ===');
     console.log('Raw recordings data:', recordings.map(r => ({
@@ -246,206 +296,100 @@ export default function EditPage() {
     }
   }, [roomId, calculateSyncOffsets]);
 
-  const loadAIFocusSegments = useCallback(async () => {
-    if (!editData || aiSegmentsLoaded) return;
-    
+  const loadFocusSegments = useCallback(async () => {
     try {
-      setLoadingAISegments(true);
-      console.log('Loading AI focus segments for room:', roomId);
+      console.log('Loading focus segments for room:', roomId);
       
       const response = await fetch(`/api/recordings/focus-segments?roomId=${roomId}`);
       if (!response.ok) {
-        throw new Error('Failed to load AI focus segments');
+        throw new Error('Failed to load focus segments');
       }
       
       const data = await response.json();
-      
-      // Debug: Log all data from API
-      console.log('=== AI SEGMENTS API RESPONSE ===');
-      console.log('focusSegments:', data.focusSegments?.length || 0);
-      console.log('speedRecommendations:', data.speedRecommendations?.length || 0);
-      console.log('cutSegments:', data.cutSegments?.length || 0);
-      console.log('Full response:', data);
-      
+      console.log('Focus segments API response:', data);
+
       if (data.focusSegments && data.focusSegments.length > 0) {
-        // Convert AI focus segments to the format expected by the editor
-        const aiZoomRanges: ZoomRange[] = data.focusSegments.map((segment: {
+        // Convert focus segments to the format expected by the editor
+        const focusZoomRanges: ZoomRange[] = data.focusSegments.map((segment: {
           id: string;
           start_time: number;
-          end_time: number;
+          end_time: number; 
           focused_participant_id: string;
-          reason: string;
-          confidence: number;
-          segment_type: 'monologue' | 'conversation' | 'silence';
-          recordings?: { id: string };
-        }) => {
-          // Find the participant recording that matches the focused participant
-          const focusedRecording = editData.recordings.find(
-            rec => rec.id === segment.recordings?.id || 
-                   rec.id === segment.focused_participant_id
-          );
-          
-          const participantIndex = focusedRecording 
-            ? editData.recordings.findIndex(rec => rec.id === focusedRecording.id)
-            : 0;
+          reason?: string;
+          confidence?: number;
+          segment_type?: string;
+          ai_generated?: boolean;
+        }, index: number) => {
+          const participantIndex = parseInt(segment.focused_participant_id.replace('participant_', '')) - 1;
+          console.log(`Focus Segment ${index + 1}: ${segment.start_time.toFixed(1)}s-${segment.end_time.toFixed(1)}s → participant ${participantIndex + 1}${segment.reason ? ` (${segment.reason})` : ''}`);
           
           return {
-            id: `ai-${segment.id}-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
+            id: segment.id || `focus-${index}`,
             startTime: segment.start_time,
             endTime: segment.end_time,
-            focusOn: focusedRecording?.id || editData.recordings[0]?.id,
-            participantIndex,
-            aiGenerated: true,
+            focusOn: segment.focused_participant_id,
+            participantIndex: Math.max(0, participantIndex), // Ensure valid index
             reason: segment.reason,
             confidence: segment.confidence,
-            type: segment.segment_type
+            type: segment.segment_type as 'monologue' | 'conversation' | 'silence',
+            aiGenerated: segment.ai_generated || false
           };
         });
-        
-        console.log(`Loaded ${aiZoomRanges.length} AI focus segments`);
-        
-        // Only add AI segments if we don't already have any AI-generated segments
-        setZoomRanges(prev => {
-          const hasAISegments = prev.some(range => range.aiGenerated);
-          if (hasAISegments) {
-            console.log('AI segments already loaded, skipping...');
-            return prev;
-          }
-          return [...prev, ...aiZoomRanges];
-        });
-        
-        // Store AI recommendations if available
-        if (data.aiEditingSession?.ai_recommendations) {
-          setAiRecommendations(data.aiEditingSession.ai_recommendations);
-        }
-      }
 
-      // Apply AI cut segments and speed recommendations if available
-      const allAIRecommendations: Array<{
-        start_time: number;
-        end_time: number;
-        speed: number;
-        reason: string;
-        confidence: number;
-        type: string;
-      }> = [];
-
-      // Add cut segments as speed recommendations with speed = 0
-      if (data.cutSegments && data.cutSegments.length > 0) {
-        console.log(`Found ${data.cutSegments.length} AI cut segments:`, data.cutSegments);
-        const cutRecommendations = data.cutSegments
-          .filter((cut: any) => {
-            // Apply AI suggestions unless user explicitly rejected them
-            const shouldApply = cut.user_approved !== false && cut.ai_generated === true;
-            console.log(`Cut segment ${cut.start_time}-${cut.end_time}: applied=${cut.applied}, user_approved=${cut.user_approved}, ai_generated=${cut.ai_generated}, shouldApply=${shouldApply}`);
-            return shouldApply;
-          })
-          .map((cut: any) => ({
-            start_time: cut.start_time,
-            end_time: cut.end_time,
-            speed: 0, // Cut = speed 0
-            reason: cut.reason,
-            confidence: cut.confidence,
-            type: 'cut'
-          }));
-        console.log(`Converted ${cutRecommendations.length} cut segments to recommendations:`, cutRecommendations);
-        allAIRecommendations.push(...cutRecommendations);
+        console.log(`Loaded ${focusZoomRanges.length} focus segments`);
+        setZoomRanges(focusZoomRanges);
       } else {
-        console.log('No cut segments found in API response');
+        console.log('No focus segments found');
       }
-
-      // Add speed recommendations
-      if (data.speedRecommendations && data.speedRecommendations.length > 0) {
-        console.log(`Found ${data.speedRecommendations.length} AI speed recommendations`);
-        allAIRecommendations.push(...data.speedRecommendations);
-      }
-
-      if (allAIRecommendations.length > 0) {
-        console.log(`Applying ${allAIRecommendations.length} total AI recommendations (cuts + speed changes)`);
-        
-        // Sort all recommendations by start time
-        const sortedRecommendations = [...allAIRecommendations].sort((a, b) => a.start_time - b.start_time);
-        
-        // Only apply AI recommendations if we have the default single section
-        if (videoSections.length === 1 && videoSections[0].startTime === 0 && videoSections[0].endTime === duration) {
-          console.log('Applying AI recommendations (cuts + speed changes) using split/delete actions');
-          
-          // Collect all split points from recommendations (both cuts and speed changes)
-          const aiSplitPoints: number[] = [];
-          for (const rec of sortedRecommendations) {
-            if (rec.start_time > 0 && !aiSplitPoints.includes(rec.start_time)) {
-              aiSplitPoints.push(rec.start_time);
-            }
-            if (rec.end_time < duration && !aiSplitPoints.includes(rec.end_time)) {
-              aiSplitPoints.push(rec.end_time);
-            }
-          }
-          
-          // Apply splits first
-          setSplitPoints(aiSplitPoints.sort((a, b) => a - b));
-          
-          // Create sections based on splits (same logic as createSplitAtTime)
-          const newSections: VideoSection[] = [];
-          const allPoints = [0, ...aiSplitPoints.sort((a, b) => a - b), duration];
-          
-          for (let i = 0; i < allPoints.length - 1; i++) {
-            const start = allPoints[i];
-            const end = allPoints[i + 1];
-            
-            // Find if this section matches any AI recommendation (cut or speed change)
-            const matchingRec = sortedRecommendations.find(rec => 
-              Math.abs(start - rec.start_time) < 0.1 && 
-              Math.abs(end - rec.end_time) < 0.1
-            );
-            
-            let isDeleted = false;
-            let playbackSpeed = 1.0;
-            
-            if (matchingRec) {
-              isDeleted = matchingRec.speed === 0; // Cut segments have speed = 0
-              playbackSpeed = matchingRec.speed === 0 ? 1.0 : matchingRec.speed;
-              
-              const actionType = matchingRec.type === 'cut' ? 'CUT' : `${playbackSpeed}x speed`;
-              console.log(`AI: Section ${start.toFixed(1)}s-${end.toFixed(1)}s -> ${actionType} (${matchingRec.reason})`);
-            }
-            
-            newSections.push({
-              id: `section-${start}-${end}`,
-              startTime: start,
-              endTime: end,
-              isDeleted: isDeleted,
-              playbackSpeed: playbackSpeed
-            });
-          }
-          
-          setVideoSections(newSections);
-          const cutSections = newSections.filter(s => s.isDeleted).length;
-          const speedSections = newSections.filter(s => !s.isDeleted && s.playbackSpeed !== 1.0).length;
-          console.log(`Applied AI recommendations: ${newSections.length} sections created (${cutSections} cuts, ${speedSections} speed changes)`);
-        } else {
-          console.log('Video sections already customized, keeping existing sections');
-        }
-      }
-      
-      setAiSegmentsLoaded(true);
       
     } catch (error) {
-      console.error('Error loading AI focus segments:', error);
-      // Don't show error to user, just log it - AI segments are optional
-    } finally {
-      setLoadingAISegments(false);
+      console.error('Error loading focus segments:', error);
     }
-  }, [roomId, editData, aiSegmentsLoaded, duration, videoSections]);
+  }, [roomId]);
+
+  // Load video sections on component mount (either AI-generated during processing or user-modified)  
+  const [sectionsLoaded, setSectionsLoaded] = useState(false);
+  
+  useEffect(() => {
+    const loadVideoSections = async () => {
+      if (roomId && duration > 0 && !sectionsLoaded) {
+        try {
+          console.log('📖 Loading video sections from database...')
+          const savedState = await loadEditState(roomId)
+          console.log('📊 Loaded sections:', savedState)
+          
+          if (savedState && savedState.videoSections.length > 0) {
+            console.log('✅ Loading', savedState.videoSections.length, 'video sections')
+            setVideoSections(savedState.videoSections)
+            if (savedState.zoomRanges.length > 0) {
+              setZoomRanges(savedState.zoomRanges)
+            }
+            if (savedState.splitPoints.length > 0) {
+              setSplitPoints(savedState.splitPoints)
+            }
+          } else {
+            console.log('⚠️ No video sections found in database, keeping default')
+          }
+          setSectionsLoaded(true)
+        } catch (error) {
+          console.error('❌ Failed to load video sections:', error)
+          setSectionsLoaded(true)
+        }
+      }
+    }
+    
+    loadVideoSections()
+  }, [roomId, duration, sectionsLoaded, loadEditState]);
 
   useEffect(() => {
     fetchEditData();
   }, [fetchEditData]);
   
   useEffect(() => {
-    if (editData && !aiSegmentsLoaded) {
-      loadAIFocusSegments();
+    if (editData) {
+      loadFocusSegments();
     }
-  }, [editData, loadAIFocusSegments, aiSegmentsLoaded]);
+  }, [editData, loadFocusSegments]);
 
   // Close context menu when clicking elsewhere
   useEffect(() => {
@@ -594,6 +538,50 @@ export default function EditPage() {
   useEffect(() => {
     checkFocusState();
   }, [checkFocusState]);
+
+  // Auto-save edit state when sections change
+  const saveCurrentEditState = useCallback(async () => {
+    console.log('🔄 saveCurrentEditState called', { 
+      sectionsLength: videoSections.length,
+      zoomRangesLength: zoomRanges.length,
+      splitPointsLength: splitPoints.length,
+      roomId,
+      hasDeletedSections: videoSections.filter(s => s.isDeleted).length 
+    })
+    
+    if (videoSections.length > 0 && roomId && sectionsLoaded) {
+      try {
+        console.log('💾 Attempting to save edit state...')
+        const result = await saveEditState(roomId, {
+          videoSections,
+          zoomRanges,
+          splitPoints
+        })
+        console.log('✅ Edit state saved successfully:', result)
+      } catch (error) {
+        console.error('❌ Failed to auto-save edit state:', error)
+      }
+    } else {
+      console.log('⚠️ Not saving: insufficient data', { sectionsLength: videoSections.length, roomId })
+    }
+  }, [videoSections, zoomRanges, splitPoints, roomId, saveEditState, sectionsLoaded])
+
+  // Update real duration when videos are loaded
+  useEffect(() => {
+    updateRealDuration();
+  }, [updateRealDuration, videosLoaded, syncOffsets]);
+
+  // Auto-save when videoSections change (with debounce)
+  useEffect(() => {
+    if (videoSections.length > 0 && sectionsLoaded && roomId) {
+      const timeoutId = setTimeout(() => {
+        console.log('🔄 Auto-save triggered by videoSections change');
+        saveCurrentEditState();
+      }, 500);
+
+      return () => clearTimeout(timeoutId);
+    }
+  }, [videoSections, sectionsLoaded, roomId, saveCurrentEditState]);
 
   // Get current captions for display
   const getCurrentCaptions = useCallback(() => {
@@ -775,9 +763,15 @@ export default function EditPage() {
         endTime: finalEndTime,
         focusOn: selectedFocus,
         participantIndex: participantIndex + 1,
+        aiGenerated: false, // Mark as user-created
+        type: 'conversation' // Default type for user-created segments
       };
 
-      setZoomRanges((prev) => [...prev, newZoomRange]);
+      setZoomRanges((prev) => {
+        console.log('➕ Adding new focus segment:', newZoomRange)
+        return [...prev, newZoomRange]
+      });
+      // Auto-save will be triggered by useEffect when zoomRanges changes
     }
 
     // Reset selection state
@@ -789,11 +783,16 @@ export default function EditPage() {
   };
 
   const removeZoomRange = (id: string) => {
-    setZoomRanges((prev) => prev.filter((range) => range.id !== id));
+    setZoomRanges((prev) => {
+      console.log('➖ Removing focus segment with id:', id)
+      return prev.filter((range) => range.id !== id)
+    });
+    // Auto-save will be triggered by useEffect when zoomRanges changes
   };
 
   const clearAllZoomRanges = () => {
     setZoomRanges([]);
+    // Auto-save will be triggered by useEffect when zoomRanges changes
   };
 
   const cancelZoomSelection = () => {
@@ -863,7 +862,10 @@ export default function EditPage() {
     
     setVideoSections(newSections);
     console.log(`Created split at ${time}s. Total sections: ${newSections.length}`);
+    // Auto-save will be triggered by useEffect when videoSections changes
   };
+
+  // Manual save trigger - only call when user makes actual modifications
 
   const deleteSection = (sectionId: string) => {
     setVideoSections(prev => 
@@ -875,6 +877,7 @@ export default function EditPage() {
     );
     setContextMenu(null);
     console.log(`Deleted section: ${sectionId}`);
+    // Auto-save will be triggered by useEffect when videoSections changes
   };
 
   const restoreSection = (sectionId: string) => {
@@ -885,18 +888,53 @@ export default function EditPage() {
           : section
       )
     );
+    setContextMenu(null);
+    console.log(`Restored section: ${sectionId}`);
+    // Auto-save will be triggered by useEffect when videoSections changes
   };
 
   const setPlaybackSpeed = (sectionId: string, speed: number) => {
-    setVideoSections(prev => 
-      prev.map(section => 
+    setVideoSections(prev => {
+      const updated = prev.map(section => 
         section.id === sectionId 
           ? { ...section, playbackSpeed: speed }
           : section
-      )
-    );
+      );
+      console.log(`Set playback speed for section ${sectionId}: ${speed}x`);
+      console.log('📝 Updated sections:', updated.map(s => ({ id: s.id, speed: s.playbackSpeed, deleted: s.isDeleted })));
+      return updated;
+    });
     setContextMenu(null);
-    console.log(`Set playback speed for section ${sectionId}: ${speed}x`);
+    // Auto-save will be triggered by useEffect when videoSections changes
+  };
+
+  // Debug function to test direct API call
+  const debugSaveSection = async (sectionId: string, speed: number) => {
+    const section = videoSections.find(s => s.id === sectionId);
+    if (!section) return;
+
+    const testSection = {
+      ...section,
+      playbackSpeed: speed
+    };
+
+    console.log('🚨 DEBUG: Testing direct API call with section:', testSection);
+
+    try {
+      const response = await fetch('/api/debug-save', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          roomId,
+          testSection
+        })
+      });
+
+      const result = await response.json();
+      console.log('🚨 DEBUG API Response:', result);
+    } catch (error) {
+      console.error('🚨 DEBUG API Error:', error);
+    }
   };
 
   const resetSplits = () => {
@@ -949,6 +987,10 @@ export default function EditPage() {
             console.log(
               `Video loaded: ${recording.id}, duration: ${video.duration}s`
             );
+            
+            // Track that this video has loaded and store its real duration
+            setVideosLoaded(prev => new Set(prev).add(recording.id));
+            setRealVideoDurations(prev => ({ ...prev, [recording.id]: video.duration }));
             
             // Apply initial cut offset - start video from its offset point
             const offset = syncOffsets[recording.id] || 0;
@@ -1278,8 +1320,19 @@ export default function EditPage() {
                 >
                   Reset Splits
                 </Button>
-                <div className="text-sm text-gray-500">
-                  {splitPoints.length} splits, {videoSections.filter(s => !s.isDeleted).length}/{videoSections.length} sezioni
+                <div className="text-sm text-gray-500 flex items-center gap-2">
+                  <span>{splitPoints.length} splits, {videoSections.filter(s => !s.isDeleted).length}/{videoSections.length} sezioni</span>
+                  {isSaving && <span className="text-xs text-blue-500">💾 Salvando...</span>}
+                  {lastSaved && !isSaving && (
+                    <span className="text-xs text-green-500">
+                      ✅ Salvato {lastSaved.toLocaleTimeString()}
+                    </span>
+                  )}
+                  {saveError && (
+                    <span className="text-xs text-red-500" title={saveError}>
+                      ❌ Errore salvataggio
+                    </span>
+                  )}
                 </div>
               </div>
             </div>
@@ -1575,29 +1628,6 @@ export default function EditPage() {
                 </div>
               )}
 
-              {/* AI Recommendations */}
-              {aiRecommendations.length > 0 && (
-                <div className="bg-gradient-to-r from-blue-50 to-purple-50 border border-blue-200 rounded-lg p-4 mt-4">
-                  <div className="flex items-center gap-2 mb-3">
-                    <span className="text-lg">🤖</span>
-                    <h3 className="font-medium text-blue-900">Raccomandazioni AI per l&apos;Editing</h3>
-                    {loadingAISegments && (
-                      <div className="ml-2 animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600"></div>
-                    )}
-                  </div>
-                  <div className="space-y-2">
-                    {aiRecommendations.map((recommendation, index) => (
-                      <div key={index} className="flex items-start gap-2">
-                        <div className="mt-1.5 w-1.5 h-1.5 rounded-full bg-blue-400 flex-shrink-0"></div>
-                        <span className="text-sm text-blue-800">{recommendation}</span>
-                      </div>
-                    ))}
-                  </div>
-                  <div className="mt-3 text-xs text-blue-600">
-                    💡 I segmenti focus evidenziati in blu sono stati generati automaticamente dall&apos;AI
-                  </div>
-                </div>
-              )}
             </div>
           </div>
         </div>
@@ -1701,6 +1731,16 @@ export default function EditPage() {
                     >
                       🗑️ Elimina Sezione
                     </button>
+                    
+                    {/* Debug button - remove when fixed */}
+                    <div className="border-t mb-1">
+                      <button
+                        className="w-full px-4 py-2 text-left hover:bg-gray-100 text-purple-600 text-sm"
+                        onClick={() => debugSaveSection(section.id, 0.5)}
+                      >
+                        🚨 DEBUG: Test Save 0.5x
+                      </button>
+                    </div>
                   </div>
                 )}
               </div>
