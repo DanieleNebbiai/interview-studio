@@ -213,94 +213,14 @@ export function buildFFmpegCommand(data: {
     })
     console.log('👥 Recording to video mapping:', recordingVideoMap)
     
-    // DYNAMIC FOCUS: Create segments based on focus changes
+    // SIMPLIFIED APPROACH: Use 50/50 layout for now to avoid concat timing issues
+    // Focus functionality temporarily disabled to fix duration problem
     const section = validSections[0] // Use only first section for now
-    console.log(`📹 Processing section ${section.startTime.toFixed(2)}s-${section.endTime.toFixed(2)}s`)
-    console.log(`🎯 Focus segments:`, focusSegments)
+    console.log(`📹 SIMPLIFIED: Processing section ${section.startTime.toFixed(2)}s-${section.endTime.toFixed(2)}s`)
+    console.log(`⚠️ Focus segments temporarily disabled to fix duration issue`)
     
-    // Create time intervals based on focus segments
-    const timePoints = new Set<number>([section.startTime, section.endTime])
-    
-    // Add focus segment boundaries
-    focusSegments.forEach(fs => {
-      if (fs.startTime >= section.startTime && fs.startTime <= section.endTime) {
-        timePoints.add(fs.startTime)
-      }
-      if (fs.endTime >= section.startTime && fs.endTime <= section.endTime) {
-        timePoints.add(fs.endTime)
-      }
-    })
-    
-    const sortedTimes = Array.from(timePoints).sort((a, b) => a - b)
-    console.log(`📐 Time intervals:`, sortedTimes)
-    
-    // Create video segments based on focus
-    const videoSegments: string[] = []
-    const audioSegments: string[] = []
-    
-    for (let i = 0; i < sortedTimes.length - 1; i++) {
-      const segStart = sortedTimes[i]
-      const segEnd = sortedTimes[i + 1]
-      const segMid = (segStart + segEnd) / 2
-      
-      // Find active focus at segment midpoint
-      const activeFocus = focusSegments.find(fs => 
-        segMid >= fs.startTime && segMid <= fs.endTime
-      )
-      
-      console.log(`📹 Segment ${i}: ${segStart.toFixed(2)}-${segEnd.toFixed(2)}s, focus:`, activeFocus?.focusedParticipantId || 'none')
-      
-      if (inputVideos.length === 2) {
-        const segmentVideoName = `seg${i}video`
-        const segmentAudioName = `seg${i}audio`
-        
-        if (activeFocus?.focusedParticipantId) {
-          // Focus mode: one participant full screen
-          const focusVideoIndex = recordingVideoMap[activeFocus.focusedParticipantId] || 0
-          console.log(`🎯 Focus segment ${i}: participant ${activeFocus.focusedParticipantId} (video ${focusVideoIndex})`)
-          
-          filterComplex.push(
-            `[${focusVideoIndex}:v]trim=${segStart.toFixed(2)}:${segEnd.toFixed(2)},scale=1280:720,setsar=1/1[${segmentVideoName}]`
-          )
-        } else {
-          // No focus: 50/50 split
-          console.log(`📱 Split segment ${i}: 50/50 layout`)
-          
-          filterComplex.push(
-            `[0:v]trim=${segStart.toFixed(2)}:${segEnd.toFixed(2)},scale=640:720,setsar=1/1[seg${i}v0]`,
-            `[1:v]trim=${segStart.toFixed(2)}:${segEnd.toFixed(2)},scale=640:720,setsar=1/1[seg${i}v1]`,
-            `[seg${i}v0][seg${i}v1]hstack[${segmentVideoName}]`
-          )
-        }
-        
-        // Audio mixing for all segments
-        filterComplex.push(
-          `[0:a]atrim=${segStart.toFixed(2)}:${segEnd.toFixed(2)}[seg${i}a0]`,
-          `[1:a]atrim=${segStart.toFixed(2)}:${segEnd.toFixed(2)}[seg${i}a1]`,
-          `[seg${i}a0][seg${i}a1]amix=inputs=2[${segmentAudioName}]`
-        )
-        
-        videoSegments.push(`[${segmentVideoName}]`)
-        audioSegments.push(`[${segmentAudioName}]`)
-      }
-    }
-    
-    // Concatenate all segments
-    if (videoSegments.length > 1) {
-      console.log(`🔗 Concatenating ${videoSegments.length} video segments`)
-      filterComplex.push(
-        `${videoSegments.join('')}concat=n=${videoSegments.length}:v=1:a=0[finalvideo]`,
-        `${audioSegments.join('')}concat=n=${audioSegments.length}:v=0:a=1[finalaudio]`
-      )
-    } else if (videoSegments.length === 1) {
-      // Single segment, just rename
-      filterComplex.push(
-        `${videoSegments[0]}copy[finalvideo]`,
-        `${audioSegments[0]}copy[finalaudio]`
-      )
-    } else {
-      // Fallback to simple 50/50 if no segments
-      console.log(`⚠️ No video segments created, using simple 50/50 fallback`)
+    if (inputVideos.length === 2) {
+      console.log(`📱 Creating simple 50/50 grid for entire video duration`)
       filterComplex.push(
         `[0:v]trim=${section.startTime.toFixed(2)}:${section.endTime.toFixed(2)},scale=640:720,setsar=1/1[v0]`,
         `[1:v]trim=${section.startTime.toFixed(2)}:${section.endTime.toFixed(2)},scale=640:720,setsar=1/1[v1]`,
@@ -308,6 +228,12 @@ export function buildFFmpegCommand(data: {
         `[0:a]atrim=${section.startTime.toFixed(2)}:${section.endTime.toFixed(2)}[a0]`,
         `[1:a]atrim=${section.startTime.toFixed(2)}:${section.endTime.toFixed(2)}[a1]`,
         `[a0][a1]amix=inputs=2[finalaudio]`
+      )
+    } else {
+      // Single video
+      filterComplex.push(
+        `[0:v]trim=${section.startTime.toFixed(2)}:${section.endTime.toFixed(2)},scale=1280:720,setsar=1/1[finalvideo]`,
+        `[0:a]atrim=${section.startTime.toFixed(2)}:${section.endTime.toFixed(2)}[finalaudio]`
       )
     }
     
