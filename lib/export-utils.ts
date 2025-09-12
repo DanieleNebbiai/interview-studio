@@ -356,10 +356,15 @@ export function buildFFmpegCommand(data: {
         
         console.log(`📝 Extracted subtitle texts: ${subtitleLines.length} lines`)
         
-        // Use simple drawtext with fixed test message for now
-        const drawTextFilter = `drawtext=text='Sottotitoli generati':fontsize=24:fontcolor=white:box=1:boxcolor=black@0.8:boxborderw=5:x=(w-text_w)/2:y=h-text_h-50`
-        console.log(`📝 Using simplified drawtext filter: ${drawTextFilter}`)
-        command.addOption('-vf', drawTextFilter)
+        // Use subtitles filter with SRT file - should work better than drawtext
+        console.log(`📝 Using subtitles filter with SRT file: ${subtitleFile}`)
+        
+        // Simple approach: let FFmpeg handle the subtitle file directly
+        // This should work with basic fonts that we installed
+        const subtitlesFilter = `subtitles=${subtitleFile}:force_style='FontName=DejaVu Sans,FontSize=18,PrimaryColour=&Hffffff,OutlineColour=&H000000,Outline=1,Shadow=1'`
+        console.log(`📝 Subtitles filter: ${subtitlesFilter}`)
+        
+        command.addOption('-vf', subtitlesFilter)
         
         console.log(`✅ SUBTITLES FILTER APPLIED SUCCESSFULLY`)
       } catch (error) {

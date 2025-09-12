@@ -9,8 +9,39 @@ import {
 } from './lib/export-utils'
 import path from 'path'
 import express from 'express'
+import { execSync } from 'child_process'
 
 console.log('🚀 Starting Supabase-based video export worker...')
+
+// Function to install basic fonts for subtitle rendering
+async function installBasicFonts() {
+  try {
+    console.log('📝 Installing basic fonts for subtitle rendering...')
+    
+    // For Alpine Linux (common in Docker containers)
+    try {
+      execSync('apk add --no-cache fontconfig ttf-dejavu', { stdio: 'pipe' })
+      console.log('✅ Fonts installed via apk (Alpine)')
+      return
+    } catch (alpineError) {
+      console.log('📝 Alpine package manager not available')
+    }
+    
+    // For Debian/Ubuntu
+    try {
+      execSync('apt-get update && apt-get install -y fonts-dejavu-core fontconfig', { stdio: 'pipe' })
+      console.log('✅ Fonts installed via apt (Debian/Ubuntu)')
+      return
+    } catch (debianError) {
+      console.log('📝 Debian package manager not available')
+    }
+    
+    console.log('⚠️ No package manager found, proceeding without font installation')
+    
+  } catch (error) {
+    console.log('⚠️ Font installation failed, will try without fonts:', error)
+  }
+}
 
 // Express server for receiving job notifications
 const app = express()
@@ -77,6 +108,9 @@ async function processAvailableJobs() {
 }
 
 async function startWorker() {
+  // Install fonts first
+  await installBasicFonts()
+  
   console.log('🔧 Environment check:', {
     NODE_ENV: process.env.NODE_ENV,
     SUPABASE_URL: process.env.NEXT_PUBLIC_SUPABASE_URL ? 'SET' : 'MISSING',
