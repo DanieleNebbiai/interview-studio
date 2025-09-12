@@ -3,37 +3,7 @@ import { S3Client, PutObjectCommand, GetObjectCommand } from '@aws-sdk/client-s3
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
 import fs from 'fs'
 import path from 'path'
-// Remove unused imports to fix build
-// const execAsync = promisify(exec)
-
-// Type definitions for export functionality
-interface ExportJobData {
-  videoSections: Array<{
-    id: string
-    startTime: number
-    endTime: number
-    isDeleted: boolean
-    playbackSpeed: number
-  }>
-  focusSegments: Array<{
-    id: string
-    startTime: number
-    endTime: number
-    focusedParticipantId: string
-    type: string
-  }>
-  transcriptions: Array<{
-    id: string
-    transcript_text: string
-    word_timestamps: any
-  }>
-  exportSettings: {
-    format: 'mp4' | 'webm'
-    quality: '720p' | '1080p' | '4k'
-    framerate: 25 | 30 | 60
-    includeSubtitles: boolean
-  }
-}
+import { ExportJobData } from './supabase-queue'
 
 // S3 Client for Cloudflare R2
 const s3Client = new S3Client({
