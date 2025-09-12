@@ -214,115 +214,38 @@ export function buildFFmpegCommand(data: {
     })
     console.log('👥 Recording to video mapping:', recordingVideoMap)
     
-    // Process each valid section with dynamic focus
-    validSections.forEach((section, index) => {
-      const speed = 1.0 // Temporarily disable playback speed to debug duration
-      
-      // Find overlapping focus segments for this section
-      const overlappingFocus = focusSegments.filter(focus =>
-        focus.startTime < section.endTime && focus.endTime > section.startTime
-      )
-      
-      console.log(`📹 Section ${index}: ${section.startTime.toFixed(2)}s-${section.endTime.toFixed(2)}s, focus segments:`, 
-        overlappingFocus.map(f => `${f.focusedParticipantId} (${f.startTime.toFixed(2)}s-${f.endTime.toFixed(2)}s)`))
-      
-      // Create time-based subsections to handle focus changes within the section
-      const timepoints = [section.startTime, section.endTime]
-      
-      // Add focus segment boundaries within this section
-      overlappingFocus.forEach(focus => {
-        if (focus.startTime > section.startTime && focus.startTime < section.endTime) {
-          timepoints.push(focus.startTime)
-        }
-        if (focus.endTime > section.startTime && focus.endTime < section.endTime) {
-          timepoints.push(focus.endTime)
-        }
-      })
-      
-      // Sort and remove duplicates
-      const sortedTimepoints = [...new Set(timepoints)].sort((a, b) => a - b)
-      
-      // Process each subsection
-      for (let t = 0; t < sortedTimepoints.length - 1; t++) {
-        const subStart = sortedTimepoints[t]
-        const subEnd = sortedTimepoints[t + 1]
-        const subIndex = `${index}_${t}`
-        
-        // Find focus for this specific subsection (middle point)
-        const subMid = (subStart + subEnd) / 2
-        const activeFocus = focusSegments.find(focus => 
-          focus.startTime <= subMid && focus.endTime >= subMid
-        )
-        
-        if (activeFocus && inputVideos.length > 1) {
-          const focusedRecordingId = activeFocus.focusedParticipantId
-          const focusVideoIndex = recordingVideoMap[focusedRecordingId]
-          
-          if (focusVideoIndex !== undefined) {
-            console.log(`🎯 Subsection ${subIndex}: FOCUS on recording ${focusedRecordingId} (video ${focusVideoIndex}) from ${subStart.toFixed(2)}s-${subEnd.toFixed(2)}s`)
-            // Full screen for focused participant
-            filterComplex.push(
-              `[${focusVideoIndex}:v]trim=${subStart.toFixed(2)}:${subEnd.toFixed(2)},setpts=PTS/${speed},scale=1280:720,setsar=1/1[v${subIndex}]`,
-              `[${focusVideoIndex}:a]atrim=${subStart.toFixed(2)}:${subEnd.toFixed(2)},asetpts=PTS/${speed}[a${subIndex}]`
-            )
-          } else {
-            console.log(`⚠️ Subsection ${subIndex}: Focus recording not found, using grid from ${subStart.toFixed(2)}s-${subEnd.toFixed(2)}s`)
-            // Fallback to grid
-            filterComplex.push(
-              `[0:v]trim=${subStart.toFixed(2)}:${subEnd.toFixed(2)},setpts=PTS/${speed},scale=640:720,setsar=1/1[v0_${subIndex}]`,
-              `[1:v]trim=${subStart.toFixed(2)}:${subEnd.toFixed(2)},setpts=PTS/${speed},scale=640:720,setsar=1/1[v1_${subIndex}]`,
-              `[v0_${subIndex}][v1_${subIndex}]hstack[v${subIndex}]`,
-              `[0:a]atrim=${subStart.toFixed(2)}:${subEnd.toFixed(2)},asetpts=PTS/${speed}[a0_${subIndex}]`,
-              `[1:a]atrim=${subStart.toFixed(2)}:${subEnd.toFixed(2)},asetpts=PTS/${speed}[a1_${subIndex}]`,
-              `[a0_${subIndex}][a1_${subIndex}]amix=inputs=2[a${subIndex}]`
-            )
-          }
-        } else {
-          console.log(`📱 Subsection ${subIndex}: GRID mode (no focus) from ${subStart.toFixed(2)}s-${subEnd.toFixed(2)}s`)
-          // Grid mode - show all videos
-          if (inputVideos.length === 1) {
-            filterComplex.push(
-              `[0:v]trim=${subStart.toFixed(2)}:${subEnd.toFixed(2)},setpts=PTS/${speed},scale=1280:720,setsar=1/1[v${subIndex}]`,
-              `[0:a]atrim=${subStart.toFixed(2)}:${subEnd.toFixed(2)},asetpts=PTS/${speed}[a${subIndex}]`
-            )
-          } else if (inputVideos.length === 2) {
-            // 2-video grid (50/50 split)
-            filterComplex.push(
-              `[0:v]trim=${subStart.toFixed(2)}:${subEnd.toFixed(2)},setpts=PTS/${speed},scale=640:720,setsar=1/1[v0_${subIndex}]`,
-              `[1:v]trim=${subStart.toFixed(2)}:${subEnd.toFixed(2)},setpts=PTS/${speed},scale=640:720,setsar=1/1[v1_${subIndex}]`,
-              `[v0_${subIndex}][v1_${subIndex}]hstack[v${subIndex}]`,
-              `[0:a]atrim=${subStart.toFixed(2)}:${subEnd.toFixed(2)},asetpts=PTS/${speed}[a0_${subIndex}]`,
-              `[1:a]atrim=${subStart.toFixed(2)}:${subEnd.toFixed(2)},asetpts=PTS/${speed}[a1_${subIndex}]`,
-              `[a0_${subIndex}][a1_${subIndex}]amix=inputs=2[a${subIndex}]`
-            )
-          }
-        }
-        
-        // Store subsection index for concatenation
-        segmentOutputs.push(`v${subIndex}`, `a${subIndex}`)
-      }
-    })
+    // SIMPLIFIED: Process single section without complex subsections to debug duration
+    const section = validSections[0] // Use only first section for now
+    const speed = 1.0
     
-    // Concatenate all segments
-    if (segmentOutputs.length > 2) { // Need at least 2 pairs (4 elements)
-      const numSegments = segmentOutputs.length / 2
-      const concatInput = segmentOutputs.map(stream => `[${stream}]`).join('')
+    console.log(`📹 SIMPLIFIED: Processing single section ${section.startTime.toFixed(2)}s-${section.endTime.toFixed(2)}s`)
+    
+    // For debugging: just create a simple 50/50 grid for the entire duration
+    if (inputVideos.length === 2) {
+      console.log(`📱 Creating simple 50/50 grid for entire video duration`)
       filterComplex.push(
-        `${concatInput}concat=n=${numSegments}:v=1:a=1[finalvideo][finalaudio]`
+        `[0:v]trim=${section.startTime.toFixed(2)}:${section.endTime.toFixed(2)},scale=640:720,setsar=1/1[v0]`,
+        `[1:v]trim=${section.startTime.toFixed(2)}:${section.endTime.toFixed(2)},scale=640:720,setsar=1/1[v1]`,
+        `[v0][v1]hstack[finalvideo]`,
+        `[0:a]atrim=${section.startTime.toFixed(2)}:${section.endTime.toFixed(2)}[finalaudio]`
       )
     } else {
-      // Single segment - rename the streams
-      const videoStream = segmentOutputs[0] 
-      const audioStream = segmentOutputs[1]
+      // Single video
       filterComplex.push(
-        `[${videoStream}]copy[finalvideo]`,
-        `[${audioStream}]copy[finalaudio]`
+        `[0:v]trim=${section.startTime.toFixed(2)}:${section.endTime.toFixed(2)},scale=1280:720,setsar=1/1[finalvideo]`,
+        `[0:a]atrim=${section.startTime.toFixed(2)}:${section.endTime.toFixed(2)}[finalaudio]`
       )
     }
     
+    // Skip segmentOutputs logic for now
+    segmentOutputs = []
+    
+    // No concatenation needed for simplified single section approach
+    console.log('📊 Using direct [finalvideo] and [finalaudio] streams from filter')
+    
     // Add subtitles to complex filter BEFORE applying it
-    let finalVideoStreamName = segmentOutputs.length > 1 ? '[finalvideo]' : '[v0]'
-    const finalAudioStreamName = segmentOutputs.length > 1 ? '[finalaudio]' : '[a0]'
+    let finalVideoStreamName = '[finalvideo]'
+    const finalAudioStreamName = '[finalaudio]'
     
     if (subtitleFile && settings.includeSubtitles && filterComplex.length > 0) {
       console.log(`📝 Adding subtitles to complex filter BEFORE applying: ${subtitleFile}`)
