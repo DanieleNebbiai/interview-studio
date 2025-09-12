@@ -320,14 +320,36 @@ export async function GET(request: NextRequest) {
     }
 
     // Convert database format to frontend format
+    const convertedVideoSections = (videoSections || []).map(section => ({
+      id: section.section_id,
+      startTime: section.start_time,
+      endTime: section.end_time,
+      isDeleted: section.is_deleted,
+      playbackSpeed: section.playback_speed
+    }));
+
+    // Derive split points from video sections
+    // Split points are where sections connect (end of one = start of next)
+    const derivedSplitPoints: number[] = [];
+    if (convertedVideoSections.length > 1) {
+      // Sort sections by start time
+      const sortedSections = [...convertedVideoSections].sort((a, b) => a.startTime - b.startTime);
+      
+      for (let i = 0; i < sortedSections.length - 1; i++) {
+        const currentEnd = sortedSections[i].endTime;
+        const nextStart = sortedSections[i + 1].startTime;
+        
+        // If they connect exactly, this is a split point
+        if (Math.abs(currentEnd - nextStart) < 0.001) {
+          derivedSplitPoints.push(currentEnd);
+        }
+      }
+    }
+
+    console.log(`[GET] Derived ${derivedSplitPoints.length} split points:`, derivedSplitPoints);
+
     const editState = {
-      videoSections: (videoSections || []).map(section => ({
-        id: section.section_id,
-        startTime: section.start_time,
-        endTime: section.end_time,
-        isDeleted: section.is_deleted,
-        playbackSpeed: section.playback_speed
-      })),
+      videoSections: convertedVideoSections,
       zoomRanges: (focusSegments || []).map(segment => ({
         id: segment.id,
         startTime: segment.start_time,
@@ -337,7 +359,7 @@ export async function GET(request: NextRequest) {
         aiGenerated: segment.ai_generated,
         type: segment.segment_type
       })),
-      splitPoints: [] // Will derive from video sections
+      splitPoints: derivedSplitPoints
     }
 
     return NextResponse.json({

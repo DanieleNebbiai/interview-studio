@@ -846,18 +846,33 @@ export default function EditPage() {
       const start = allPoints[i];
       const end = allPoints[i + 1];
       
-      // Check if this section was previously deleted
+      // Check if this section already exists (exact match)
       const existingSection = videoSections.find(s => 
         Math.abs(s.startTime - start) < 0.1 && Math.abs(s.endTime - end) < 0.1
       );
       
-      newSections.push({
-        id: `section-${start}-${end}`,
-        startTime: start,
-        endTime: end,
-        isDeleted: existingSection?.isDeleted || false,
-        playbackSpeed: existingSection?.playbackSpeed || 1.0
-      });
+      if (existingSection) {
+        // Keep existing section as-is
+        newSections.push(existingSection);
+      } else {
+        // This is a new section created by splitting
+        // Find the original section that contained this time range
+        const originalSection = videoSections.find(s => 
+          start >= s.startTime && end <= s.endTime && 
+          (s.endTime - s.startTime) > (end - start) // Make sure it's larger (being split)
+        );
+        
+        // Inherit properties from the original section being split
+        newSections.push({
+          id: `section-${start}-${end}`,
+          startTime: start,
+          endTime: end,
+          isDeleted: originalSection?.isDeleted || false,
+          playbackSpeed: originalSection?.playbackSpeed || 1.0
+        });
+        
+        console.log(`📄 Created new section ${start}-${end} inheriting from original: deleted=${originalSection?.isDeleted}, speed=${originalSection?.playbackSpeed}x`);
+      }
     }
     
     setVideoSections(newSections);
