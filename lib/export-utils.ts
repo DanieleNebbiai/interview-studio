@@ -262,15 +262,15 @@ export function buildFFmpegCommand(data: {
             console.log(`🎯 Subsection ${subIndex}: FOCUS on recording ${focusedRecordingId} (video ${focusVideoIndex}) from ${subStart.toFixed(2)}s-${subEnd.toFixed(2)}s`)
             // Full screen for focused participant
             filterComplex.push(
-              `[${focusVideoIndex}:v]trim=${subStart.toFixed(2)}:${subEnd.toFixed(2)},setpts=PTS/${speed},scale=1280:720[v${subIndex}]`,
+              `[${focusVideoIndex}:v]trim=${subStart.toFixed(2)}:${subEnd.toFixed(2)},setpts=PTS/${speed},scale=1280:720,setsar=1/1[v${subIndex}]`,
               `[${focusVideoIndex}:a]atrim=${subStart.toFixed(2)}:${subEnd.toFixed(2)},asetpts=PTS/${speed}[a${subIndex}]`
             )
           } else {
             console.log(`⚠️ Subsection ${subIndex}: Focus recording not found, using grid from ${subStart.toFixed(2)}s-${subEnd.toFixed(2)}s`)
             // Fallback to grid
             filterComplex.push(
-              `[0:v]trim=${subStart.toFixed(2)}:${subEnd.toFixed(2)},setpts=PTS/${speed},scale=960:540[v0_${subIndex}]`,
-              `[1:v]trim=${subStart.toFixed(2)}:${subEnd.toFixed(2)},setpts=PTS/${speed},scale=960:540[v1_${subIndex}]`,
+              `[0:v]trim=${subStart.toFixed(2)}:${subEnd.toFixed(2)},setpts=PTS/${speed},scale=640:720,setsar=1/1[v0_${subIndex}]`,
+              `[1:v]trim=${subStart.toFixed(2)}:${subEnd.toFixed(2)},setpts=PTS/${speed},scale=640:720,setsar=1/1[v1_${subIndex}]`,
               `[v0_${subIndex}][v1_${subIndex}]hstack[v${subIndex}]`,
               `[0:a]atrim=${subStart.toFixed(2)}:${subEnd.toFixed(2)},asetpts=PTS/${speed}[a0_${subIndex}]`,
               `[1:a]atrim=${subStart.toFixed(2)}:${subEnd.toFixed(2)},asetpts=PTS/${speed}[a1_${subIndex}]`,
@@ -282,14 +282,14 @@ export function buildFFmpegCommand(data: {
           // Grid mode - show all videos
           if (inputVideos.length === 1) {
             filterComplex.push(
-              `[0:v]trim=${subStart.toFixed(2)}:${subEnd.toFixed(2)},setpts=PTS/${speed}[v${subIndex}]`,
+              `[0:v]trim=${subStart.toFixed(2)}:${subEnd.toFixed(2)},setpts=PTS/${speed},scale=1280:720,setsar=1/1[v${subIndex}]`,
               `[0:a]atrim=${subStart.toFixed(2)}:${subEnd.toFixed(2)},asetpts=PTS/${speed}[a${subIndex}]`
             )
           } else if (inputVideos.length === 2) {
             // 2-video grid (50/50 split)
             filterComplex.push(
-              `[0:v]trim=${subStart.toFixed(2)}:${subEnd.toFixed(2)},setpts=PTS/${speed},scale=640:720[v0_${subIndex}]`,
-              `[1:v]trim=${subStart.toFixed(2)}:${subEnd.toFixed(2)},setpts=PTS/${speed},scale=640:720[v1_${subIndex}]`,
+              `[0:v]trim=${subStart.toFixed(2)}:${subEnd.toFixed(2)},setpts=PTS/${speed},scale=640:720,setsar=1/1[v0_${subIndex}]`,
+              `[1:v]trim=${subStart.toFixed(2)}:${subEnd.toFixed(2)},setpts=PTS/${speed},scale=640:720,setsar=1/1[v1_${subIndex}]`,
               `[v0_${subIndex}][v1_${subIndex}]hstack[v${subIndex}]`,
               `[0:a]atrim=${subStart.toFixed(2)}:${subEnd.toFixed(2)},asetpts=PTS/${speed}[a0_${subIndex}]`,
               `[1:a]atrim=${subStart.toFixed(2)}:${subEnd.toFixed(2)},asetpts=PTS/${speed}[a1_${subIndex}]`,
