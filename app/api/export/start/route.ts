@@ -163,8 +163,8 @@ export async function POST(request: NextRequest) {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ jobId: job.id }),
-        // Don't wait too long for worker response
-        signal: AbortSignal.timeout(5000)
+        // Increase timeout for worker processing
+        signal: AbortSignal.timeout(10000)
       })
       
       if (notifyResponse.ok) {

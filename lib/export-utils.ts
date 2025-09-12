@@ -337,18 +337,31 @@ export function buildFFmpegCommand(data: {
       .addOption('-pix_fmt', 'yuv420p') // Pixel format for compatibility
     
     // Add subtitles if provided (must be after codec settings)
+    console.log(`🔍 Subtitle check: file=${subtitleFile}, includeSubtitles=${settings.includeSubtitles}`)
+    
     if (subtitleFile && settings.includeSubtitles) {
-      console.log(`📝 Adding ASS subtitles: ${subtitleFile}`)
+      console.log(`📝 ATTEMPTING to add ASS subtitles: ${subtitleFile}`)
       // Verify file exists
       try {
         const subtitleStats = fs.statSync(subtitleFile)
-        console.log(`📝 Subtitle file size: ${subtitleStats.size} bytes`)
+        console.log(`📝 Subtitle file verified - size: ${subtitleStats.size} bytes`)
+        
+        // Read first few lines of subtitle file for debugging
+        const subtitleContent = fs.readFileSync(subtitleFile, 'utf8')
+        const firstLines = subtitleContent.split('\n').slice(0, 5).join('\n')
+        console.log(`📝 Subtitle file preview:\n${firstLines}`)
         
         // Use subtitles filter to burn them into the video
-        command.addOption('-vf', `subtitles='${subtitleFile}':force_style='Fontsize=20,PrimaryColour=&H00FFFFFF'`)
+        const subtitleFilter = `subtitles='${subtitleFile}':force_style='Fontsize=24,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,Outline=2'`
+        console.log(`📝 Using subtitle filter: ${subtitleFilter}`)
+        command.addOption('-vf', subtitleFilter)
+        
+        console.log(`✅ SUBTITLES FILTER APPLIED SUCCESSFULLY`)
       } catch (error) {
-        console.error(`❌ Subtitle file not found: ${subtitleFile}`, error)
+        console.error(`❌ Subtitle file error: ${subtitleFile}`, error)
       }
+    } else {
+      console.log(`⚠️ Subtitles SKIPPED: file=${!!subtitleFile}, includeSubtitles=${settings.includeSubtitles}`)
     }
     
     command.output(outputPath)
