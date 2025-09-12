@@ -8,10 +8,74 @@ import {
   cleanupTempFiles 
 } from './lib/export-utils'
 import path from 'path'
+import express from 'express'
 
 console.log('🚀 Starting Supabase-based video export worker...')
 
-// Worker loop
+// Express server for receiving job notifications
+const app = express()
+app.use(express.json())
+
+let isProcessing = false
+
+// Endpoint to trigger job processing
+app.post('/process-jobs', async (req, res) => {
+  console.log('📬 Received job processing request')
+  
+  if (isProcessing) {
+    console.log('⚠️ Already processing, skipping...')
+    return res.json({ message: 'Already processing jobs' })
+  }
+
+  try {
+    await processAvailableJobs()
+    res.json({ message: 'Job processing completed' })
+  } catch (error) {
+    console.error('❌ Job processing error:', error)
+    res.status(500).json({ error: 'Job processing failed' })
+  }
+})
+
+// Health check endpoint
+app.get('/health', (req, res) => {
+  res.json({ 
+    status: 'healthy', 
+    isProcessing,
+    timestamp: new Date().toISOString()
+  })
+})
+
+async function processAvailableJobs() {
+  if (isProcessing) {
+    console.log('⚠️ Already processing jobs, skipping...')
+    return
+  }
+
+  isProcessing = true
+  console.log('🔄 Starting job processing...')
+
+  try {
+    while (true) {
+      // Get next job from queue
+      const job = await exportQueue.getNextJob()
+      
+      if (!job) {
+        console.log('✅ No more jobs to process')
+        break
+      }
+
+      console.log(`📹 Processing export job: ${job.id}`)
+      await processExportJob(job.id, job.job_data)
+    }
+  } catch (error) {
+    console.error('❌ Error during job processing:', error)
+    throw error
+  } finally {
+    isProcessing = false
+    console.log('🏁 Job processing session completed')
+  }
+}
+
 async function startWorker() {
   console.log('🔧 Environment check:', {
     NODE_ENV: process.env.NODE_ENV,
@@ -23,26 +87,19 @@ async function startWorker() {
   const allJobs = await exportQueue.getAllJobs(10)
   console.log('🔍 All jobs in database:', allJobs.map(j => ({ id: j.id, status: j.status })))
 
-  while (true) {
-    try {
-      // Get next job from queue
-      const job = await exportQueue.getNextJob()
-      
-      if (!job) {
-        // No jobs available, wait and try again
-        await new Promise(resolve => setTimeout(resolve, 5000)) // Wait 5 seconds
-        continue
-      }
+  // Start the HTTP server
+  const PORT = process.env.WORKER_PORT || 3001
+  app.listen(PORT, () => {
+    console.log(`🌐 Worker HTTP server listening on port ${PORT}`)
+    console.log(`📬 Send POST requests to http://localhost:${PORT}/process-jobs to trigger job processing`)
+  })
 
-      console.log(`📹 Processing export job: ${job.id}`)
-      
-      await processExportJob(job.id, job.job_data)
-      
-    } catch (error) {
-      console.error('❌ Worker error:', error)
-      // Wait before retrying on error
-      await new Promise(resolve => setTimeout(resolve, 10000)) // Wait 10 seconds
-    }
+  // Process any existing jobs on startup
+  console.log('🔄 Checking for existing jobs on startup...')
+  try {
+    await processAvailableJobs()
+  } catch (error) {
+    console.error('❌ Error processing startup jobs:', error)
   }
 }
 

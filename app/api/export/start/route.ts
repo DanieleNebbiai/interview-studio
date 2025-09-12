@@ -154,6 +154,29 @@ export async function POST(request: NextRequest) {
 
     console.log(`Export job created with ID: ${job.id}`)
 
+    // Notify worker to process the new job
+    try {
+      const workerUrl = process.env.WORKER_URL || 'http://localhost:3001'
+      console.log(`📬 Notifying worker at ${workerUrl}/process-jobs`)
+      
+      const notifyResponse = await fetch(`${workerUrl}/process-jobs`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ jobId: job.id }),
+        // Don't wait too long for worker response
+        signal: AbortSignal.timeout(5000)
+      })
+      
+      if (notifyResponse.ok) {
+        console.log('✅ Worker notified successfully')
+      } else {
+        console.warn('⚠️ Worker notification failed:', notifyResponse.status)
+      }
+    } catch (error) {
+      console.warn('⚠️ Failed to notify worker (job will still be processed eventually):', error)
+      // Don't fail the request if worker notification fails
+    }
+
     return NextResponse.json({
       success: true,
       jobId: job.id,
