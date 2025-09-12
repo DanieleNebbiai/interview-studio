@@ -117,6 +117,34 @@ async function startWorker() {
     SUPABASE_KEY: process.env.SUPABASE_SERVICE_ROLE_KEY ? 'SET' : 'MISSING',
   })
 
+  // Docker/system diagnostics
+  try {
+    const os = require('os')
+    console.log('🖥️ System info:', {
+      platform: os.platform(),
+      arch: os.arch(),
+      totalMem: `${Math.round(os.totalmem() / 1024 / 1024 / 1024 * 100) / 100}GB`,
+      freeMem: `${Math.round(os.freemem() / 1024 / 1024)}MB`,
+      cpus: os.cpus().length,
+      loadAvg: os.loadavg(),
+      uptime: `${Math.round(os.uptime() / 60)}min`
+    })
+  } catch (error) {
+    console.log('⚠️ Could not get system info:', error)
+  }
+
+  // Start memory monitoring for Docker debugging
+  setInterval(() => {
+    const used = process.memoryUsage()
+    console.log('📊 Memory usage:', {
+      rss: `${Math.round(used.rss / 1024 / 1024)}MB`,
+      heapUsed: `${Math.round(used.heapUsed / 1024 / 1024)}MB`,
+      heapTotal: `${Math.round(used.heapTotal / 1024 / 1024)}MB`,
+      external: `${Math.round(used.external / 1024 / 1024)}MB`,
+      timestamp: new Date().toISOString()
+    })
+  }, 10000) // Every 10 seconds during processing
+
   // Debug: check all jobs in database first
   const allJobs = await exportQueue.getAllJobs(10)
   console.log('🔍 All jobs in database:', allJobs.map(j => ({ id: j.id, status: j.status })))
@@ -198,15 +226,32 @@ async function processExportJob(jobId: string, jobData: ExportJobData) {
     const outputPath = path.join('/tmp', `${jobId}_final.${exportSettings.format}`)
     
     console.log('🎬 Starting FFmpeg processing...')
-    await buildFFmpegCommand({
-      inputVideos: localVideos,
-      outputPath,
-      videoSections,
-      focusSegments,
-      subtitleFile,
-      settings: exportSettings,
-      recordings
-    })
+    
+    // Enhanced memory monitoring during FFmpeg processing
+    const memoryMonitor = setInterval(() => {
+      const used = process.memoryUsage()
+      console.log('🔍 FFmpeg Memory:', {
+        rss: `${Math.round(used.rss / 1024 / 1024)}MB`,
+        heapUsed: `${Math.round(used.heapUsed / 1024 / 1024)}MB`,
+        external: `${Math.round(used.external / 1024 / 1024)}MB`,
+        timestamp: new Date().toISOString()
+      })
+    }, 5000) // Every 5 seconds during FFmpeg
+    
+    try {
+      await buildFFmpegCommand({
+        inputVideos: localVideos,
+        outputPath,
+        videoSections,
+        focusSegments,
+        subtitleFile,
+        settings: exportSettings,
+        recordings
+      })
+    } finally {
+      // Stop memory monitoring after FFmpeg completes/fails
+      clearInterval(memoryMonitor)
+    }
     
     await updateJobProgress(jobId, {
       percentage: 85,
