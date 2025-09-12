@@ -76,15 +76,35 @@ export async function generateSubtitleFile(
   videoSections: ExportJobData['videoSections'],
   jobId: string
 ): Promise<string> {
-  const subtitlePath = path.join(TEMP_DIR, `${jobId}_subtitles.srt`)
+  const subtitlePath = path.join(TEMP_DIR, `${jobId}_subtitles.ass`)
   
-  let srtContent = ''
-  let subtitleIndex = 1
+  // Create ASS subtitle format for better styling (like live captions)
+  let assContent = `[Script Info]
+Title: Interview Studio Export
+ScriptType: v4.00+
+
+[V4+ Styles]
+Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
+Style: Participant1,Arial,24,&H00FFFFFF,&H00000000,&H00000000,&H80000000,1,0,0,0,100,100,0,0,1,2,0,2,10,10,30,1
+Style: Participant2,Arial,24,&H0099FFFF,&H00000000,&H00000000,&H80000000,1,0,0,0,100,100,0,0,1,2,0,2,10,10,30,1
+Style: Active,Arial,26,&H00000000,&H0000FFFF,&H00000000,&H00FFFF00,1,0,0,0,100,100,0,0,1,2,0,2,10,10,30,1
+
+[Events]
+Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
+
+`
   
-  // Generate SRT format subtitles
-  for (const transcription of transcriptions) {
+  // Collect all words from all participants with timing
+  const allWords: Array<{
+    word: string
+    start: number
+    end: number
+    participantIndex: number
+  }> = []
+  
+  transcriptions.forEach((transcription, participantIndex) => {
     if (transcription.word_timestamps?.words) {
-      for (const word of transcription.word_timestamps.words) {
+      transcription.word_timestamps.words.forEach((word) => {
         // Check if this word is in a valid (non-deleted) section
         const isInValidSection = videoSections.some(section => 
           !section.isDeleted && 
@@ -93,20 +113,78 @@ export async function generateSubtitleFile(
         )
         
         if (isInValidSection) {
-          const startTime = formatSRTTime(word.start)
-          const endTime = formatSRTTime(word.end)
-          
-          srtContent += `${subtitleIndex}\n`
-          srtContent += `${startTime} --> ${endTime}\n`
-          srtContent += `${word.word}\n\n`
-          
-          subtitleIndex++
+          allWords.push({
+            ...word,
+            participantIndex: participantIndex + 1
+          })
         }
-      }
+      })
     }
+  })
+  
+  // Sort by start time
+  allWords.sort((a, b) => a.start - b.start)
+  
+  // Group words into phrases (similar to live captions)
+  const phrases: Array<{
+    words: typeof allWords
+    startTime: number
+    endTime: number
+    participantIndex: number
+  }> = []
+  
+  let currentPhrase: typeof allWords = []
+  let currentParticipant = 0
+  
+  for (const word of allWords) {
+    // Start new phrase if:
+    // 1. Different participant
+    // 2. Gap > 1 second between words
+    // 3. Phrase has 8+ words
+    const timeSinceLastWord = currentPhrase.length > 0 
+      ? word.start - currentPhrase[currentPhrase.length - 1].end 
+      : 0
+    
+    const shouldStartNewPhrase = 
+      word.participantIndex !== currentParticipant ||
+      timeSinceLastWord > 1.0 ||
+      currentPhrase.length >= 8
+    
+    if (shouldStartNewPhrase && currentPhrase.length > 0) {
+      phrases.push({
+        words: [...currentPhrase],
+        startTime: currentPhrase[0].start,
+        endTime: currentPhrase[currentPhrase.length - 1].end,
+        participantIndex: currentParticipant
+      })
+      currentPhrase = []
+    }
+    
+    currentPhrase.push(word)
+    currentParticipant = word.participantIndex
   }
   
-  fs.writeFileSync(subtitlePath, srtContent, 'utf8')
+  // Add final phrase
+  if (currentPhrase.length > 0) {
+    phrases.push({
+      words: [...currentPhrase],
+      startTime: currentPhrase[0].start,
+      endTime: currentPhrase[currentPhrase.length - 1].end,
+      participantIndex: currentParticipant
+    })
+  }
+  
+  // Generate ASS events for each phrase
+  phrases.forEach((phrase) => {
+    const startTime = formatASSTime(phrase.startTime)
+    const endTime = formatASSTime(phrase.endTime)
+    const style = `Participant${phrase.participantIndex}`
+    const text = phrase.words.map(w => w.word).join(' ')
+    
+    assContent += `Dialogue: 0,${startTime},${endTime},${style},,0,0,0,,${text}\n`
+  })
+  
+  fs.writeFileSync(subtitlePath, assContent, 'utf8')
   return subtitlePath
 }
 
@@ -118,6 +196,16 @@ function formatSRTTime(seconds: number): string {
   const ms = Math.floor((seconds % 1) * 1000)
   
   return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')},${ms.toString().padStart(3, '0')}`
+}
+
+// Format time for ASS (H:MM:SS.cc)
+function formatASSTime(seconds: number): string {
+  const hours = Math.floor(seconds / 3600)
+  const minutes = Math.floor((seconds % 3600) / 60)
+  const secs = Math.floor(seconds % 60)
+  const centiseconds = Math.floor((seconds % 1) * 100)
+  
+  return `${hours}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}.${centiseconds.toString().padStart(2, '0')}`
 }
 
 // Build FFmpeg command for multi-video export
@@ -246,6 +334,12 @@ export function buildFFmpegCommand(data: {
     
     // TEMP: Skip all complex filtering - use simple seek/duration approach
     console.log('⚠️ Skipping complex filters - using simple seek/duration approach')
+    
+    // Add subtitles if provided
+    if (subtitleFile && settings.includeSubtitles) {
+      console.log(`📝 Adding ASS subtitles: ${subtitleFile}`)
+      command.addOption('-vf', `ass=${subtitleFile}`)
+    }
     
     // Output settings with explicit codecs for compatibility
     command
