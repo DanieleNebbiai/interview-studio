@@ -3,8 +3,6 @@ import { S3Client, PutObjectCommand, GetObjectCommand } from '@aws-sdk/client-s3
 import { getSignedUrl } from '@aws-sdk/s3-request-presigner'
 import fs from 'fs'
 import path from 'path'
-import { promisify } from 'util'
-import { exec } from 'child_process'
 // Remove unused imports to fix build
 // const execAsync = promisify(exec)
 
@@ -104,7 +102,7 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
   
   transcriptions.forEach((transcription, participantIndex) => {
     if (transcription.word_timestamps?.words) {
-      transcription.word_timestamps.words.forEach((word) => {
+      transcription.word_timestamps.words.forEach((word: { word: string; start: number; end: number }) => {
         // Check if this word is in a valid (non-deleted) section
         const isInValidSection = videoSections.some(section => 
           !section.isDeleted && 
@@ -186,16 +184,6 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
   
   fs.writeFileSync(subtitlePath, assContent, 'utf8')
   return subtitlePath
-}
-
-// Format time for SRT (HH:MM:SS,mmm)
-function formatSRTTime(seconds: number): string {
-  const hours = Math.floor(seconds / 3600)
-  const minutes = Math.floor((seconds % 3600) / 60)
-  const secs = Math.floor(seconds % 60)
-  const ms = Math.floor((seconds % 1) * 1000)
-  
-  return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')},${ms.toString().padStart(3, '0')}`
 }
 
 // Format time for ASS (H:MM:SS.cc)
