@@ -250,13 +250,9 @@ export function buildFFmpegCommand(data: {
       console.log(`📝 Adding subtitles to complex filter BEFORE applying: ${subtitleFile}`)
       const subtitlesFilter = `subtitles=${subtitleFile}:force_style='FontName=DejaVu Sans,FontSize=18,PrimaryColour=&Hffffff,OutlineColour=&H000000,Outline=1,Shadow=1'`
       
-      if (segmentOutputs.length > 1) {
-        filterComplex.push(`[finalvideo]${subtitlesFilter}[finalvideo_sub]`)
-        finalVideoStreamName = '[finalvideo_sub]'
-      } else {
-        filterComplex.push(`[v0]${subtitlesFilter}[v0_sub]`)
-        finalVideoStreamName = '[v0_sub]'
-      }
+      // Always apply subtitles to [finalvideo] in simplified approach
+      filterComplex.push(`[finalvideo]${subtitlesFilter}[finalvideo_sub]`)
+      finalVideoStreamName = '[finalvideo_sub]'
       console.log(`✅ Subtitles added to filterComplex, final video stream: ${finalVideoStreamName}`)
     }
     
