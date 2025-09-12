@@ -111,70 +111,91 @@ export async function generateSubtitleFile(
   // Sort by start time
   allWords.sort((a, b) => a.start - b.start)
   
-  // Group words into phrases (similar to live captions)
-  const phrases: Array<{
-    words: typeof allWords
-    startTime: number
-    endTime: number
-    participantIndex: number
-  }> = []
+  // Replicate live captions behavior: show words with 3-second window
+  // Create subtitle entries that match the live caption display
+  const showWindow = 3.0 // Same 3-second window as in the editor
   
-  let currentPhrase: typeof allWords = []
-  let currentParticipant = 0
+  console.log(`Generating live-caption style subtitles for ${allWords.length} words with ${showWindow}s window`)
   
-  for (const word of allWords) {
-    // Start new phrase if:
-    // 1. Different participant
-    // 2. Gap > 1 second between words
-    // 3. Phrase has 8+ words
-    const timeSinceLastWord = currentPhrase.length > 0 
-      ? word.start - currentPhrase[currentPhrase.length - 1].end 
-      : 0
-    
-    const shouldStartNewPhrase = 
-      word.participantIndex !== currentParticipant ||
-      timeSinceLastWord > 1.0 ||
-      currentPhrase.length >= 8
-    
-    if (shouldStartNewPhrase && currentPhrase.length > 0) {
-      phrases.push({
-        words: [...currentPhrase],
-        startTime: currentPhrase[0].start,
-        endTime: currentPhrase[currentPhrase.length - 1].end,
-        participantIndex: currentParticipant
-      })
-      currentPhrase = []
-    }
-    
-    currentPhrase.push(word)
-    currentParticipant = word.participantIndex
-  }
+  // Create time intervals where captions should be visible
+  // Find all significant time points (word starts and ends)
+  const timePoints = new Set<number>()
   
-  // Add final phrase
-  if (currentPhrase.length > 0) {
-    phrases.push({
-      words: [...currentPhrase],
-      startTime: currentPhrase[0].start,
-      endTime: currentPhrase[currentPhrase.length - 1].end,
-      participantIndex: currentParticipant
-    })
-  }
-  
-  // Generate SRT events for each phrase
-  phrases.forEach((phrase) => {
-    const startTime = formatSRTTime(phrase.startTime)
-    const endTime = formatSRTTime(phrase.endTime)
-    
-    // Add participant indicator and text
-    const participantLabel = `[Partecipante ${phrase.participantIndex}]`
-    const text = phrase.words.map(w => w.word).join(' ')
-    
-    srtContent += `${subtitleIndex}\n`
-    srtContent += `${startTime} --> ${endTime}\n`
-    srtContent += `${participantLabel} ${text}\n\n`
-    
-    subtitleIndex++
+  allWords.forEach(word => {
+    // Add time points for the visibility window
+    timePoints.add(Math.max(0, word.start - showWindow))
+    timePoints.add(word.start)
+    timePoints.add(word.end)
+    timePoints.add(word.end + showWindow)
   })
+  
+  const sortedTimePoints = Array.from(timePoints).sort((a, b) => a - b)
+  
+  // Create subtitle segments for each time interval
+  for (let i = 0; i < sortedTimePoints.length - 1; i++) {
+    const intervalStart = sortedTimePoints[i]
+    const intervalEnd = sortedTimePoints[i + 1]
+    const intervalMid = (intervalStart + intervalEnd) / 2
+    
+    // Find words that should be visible at this interval's midpoint
+    const visibleWords: Array<{
+      word: string
+      isActive: boolean
+      participantIndex: number
+    }> = []
+    
+    allWords.forEach(word => {
+      // Word is visible if midpoint is within show window
+      if (
+        intervalMid >= word.start - showWindow &&
+        intervalMid <= word.end + showWindow
+      ) {
+        const isActive = intervalMid >= word.start && intervalMid <= word.end
+        visibleWords.push({
+          word: word.word,
+          isActive,
+          participantIndex: word.participantIndex
+        })
+      }
+    })
+    
+    // Only create subtitle if there are visible words
+    if (visibleWords.length > 0) {
+      const startTime = formatSRTTime(intervalStart)
+      const endTime = formatSRTTime(intervalEnd)
+      
+      // Sort words by start time to maintain order
+      const sortedWords = allWords
+        .filter(word => 
+          intervalMid >= word.start - showWindow &&
+          intervalMid <= word.end + showWindow
+        )
+        .sort((a, b) => a.start - b.start)
+      
+      // Create subtitle text with different styles for active/inactive words
+      let subtitleText = ''
+      
+      sortedWords.forEach(word => {
+        const isActive = intervalMid >= word.start && intervalMid <= word.end
+        const color = word.participantIndex === 1 
+          ? (isActive ? '#3b82f6' : '#60a5fa')  // Blue tones for participant 1
+          : (isActive ? '#f59e0b' : '#fbbf24')  // Orange tones for participant 2
+        
+        const style = isActive ? `<b>${word.word}</b>` : word.word
+        subtitleText += `<font color="${color}">${style}</font> `
+      })
+      
+      subtitleText = subtitleText.trim()
+      
+      if (subtitleText) {
+        srtContent += `${subtitleIndex}\n`
+        srtContent += `${startTime} --> ${endTime}\n`
+        srtContent += `${subtitleText}\n\n`
+        
+        subtitleIndex++
+      }
+    }
+  }
   
   fs.writeFileSync(subtitlePath, srtContent, 'utf8')
   return subtitlePath
