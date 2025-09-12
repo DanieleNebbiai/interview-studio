@@ -299,18 +299,25 @@ export function buildFFmpegCommand(data: {
         }
         
         // Store subsection index for concatenation
-        segmentOutputs.push(`[v${subIndex}]`, `[a${subIndex}]`)
+        segmentOutputs.push(`v${subIndex}`, `a${subIndex}`)
       }
     })
     
     // Concatenate all segments
-    if (segmentOutputs.length > 1) {
+    if (segmentOutputs.length > 2) { // Need at least 2 pairs (4 elements)
+      const numSegments = segmentOutputs.length / 2
+      const concatInput = segmentOutputs.map(stream => `[${stream}]`).join('')
       filterComplex.push(
-        `${segmentOutputs.join('')}concat=n=${segmentOutputs.length}:v=1:a=1[finalvideo][finalaudio]`
+        `${concatInput}concat=n=${numSegments}:v=1:a=1[finalvideo][finalaudio]`
       )
     } else {
-      // Single segment - use the outputs directly
-      // No additional filter needed, [v0] becomes [finalvideo], [a0] becomes [finalaudio]
+      // Single segment - rename the streams
+      const videoStream = segmentOutputs[0] 
+      const audioStream = segmentOutputs[1]
+      filterComplex.push(
+        `[${videoStream}]copy[finalvideo]`,
+        `[${audioStream}]copy[finalaudio]`
+      )
     }
     
     // Add subtitles to complex filter BEFORE applying it
