@@ -345,10 +345,26 @@ export function buildFFmpegCommand(data: {
         const firstLines = subtitleContent.split('\n').slice(0, 5).join('\n')
         console.log(`📝 Subtitle file preview:\n${firstLines}`)
         
-        // Use subtitles filter for SRT (more compatible)
-        const subtitleFilter = `subtitles='${subtitleFile}':force_style='FontSize=20,PrimaryColour=&Hffffff,OutlineColour=&H000000,BackColour=&H80000000'`
-        console.log(`📝 Using subtitle filter: ${subtitleFilter}`)
-        command.addOption('-vf', subtitleFilter)
+        // Use drawtext filter instead of subtitles (no font dependencies)
+        // First, let's read the subtitle content to extract text
+        const subtitleLines = subtitleContent.split('\n').filter(line => 
+          line.trim() && 
+          !line.match(/^\d+$/) && // Not a number line
+          !line.includes('-->') && // Not a timestamp line
+          line.trim() !== ''
+        )
+        
+        console.log(`📝 Extracted subtitle texts: ${subtitleLines.length} lines`)
+        
+        if (subtitleLines.length > 0) {
+          // Use the first subtitle line as a test
+          const testText = subtitleLines[0].replace(/'/g, '\\\\"')
+          const drawTextFilter = `drawtext=text='${testText}':fontsize=24:fontcolor=white:box=1:boxcolor=black@0.8:boxborderw=5:x=(w-text_w)/2:y=h-text_h-50`
+          console.log(`📝 Using drawtext filter: ${drawTextFilter}`)
+          command.addOption('-vf', drawTextFilter)
+        } else {
+          console.log(`⚠️ No subtitle text found, skipping subtitle rendering`)
+        }
         
         console.log(`✅ SUBTITLES FILTER APPLIED SUCCESSFULLY`)
       } catch (error) {
