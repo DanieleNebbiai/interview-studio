@@ -323,12 +323,6 @@ export function buildFFmpegCommand(data: {
     // TEMP: Skip all complex filtering - use simple seek/duration approach
     console.log('⚠️ Skipping complex filters - using simple seek/duration approach')
     
-    // Add subtitles if provided
-    if (subtitleFile && settings.includeSubtitles) {
-      console.log(`📝 Adding ASS subtitles: ${subtitleFile}`)
-      command.addOption('-vf', `ass=${subtitleFile}`)
-    }
-    
     // Output settings with explicit codecs for compatibility
     command
       .format(settings.format)
@@ -341,7 +335,23 @@ export function buildFFmpegCommand(data: {
       .addOption('-profile:v', 'high') // High profile for better compatibility
       .addOption('-level', '4.0') // Level 4.0 for compatibility
       .addOption('-pix_fmt', 'yuv420p') // Pixel format for compatibility
-      .output(outputPath)
+    
+    // Add subtitles if provided (must be after codec settings)
+    if (subtitleFile && settings.includeSubtitles) {
+      console.log(`📝 Adding ASS subtitles: ${subtitleFile}`)
+      // Verify file exists
+      try {
+        const subtitleStats = fs.statSync(subtitleFile)
+        console.log(`📝 Subtitle file size: ${subtitleStats.size} bytes`)
+        
+        // Use subtitles filter to burn them into the video
+        command.addOption('-vf', `subtitles='${subtitleFile}':force_style='Fontsize=20,PrimaryColour=&H00FFFFFF'`)
+      } catch (error) {
+        console.error(`❌ Subtitle file not found: ${subtitleFile}`, error)
+      }
+    }
+    
+    command.output(outputPath)
     
     // Execute command with detailed logging
     command
