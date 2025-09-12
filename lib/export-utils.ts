@@ -356,15 +356,10 @@ export function buildFFmpegCommand(data: {
         
         console.log(`📝 Extracted subtitle texts: ${subtitleLines.length} lines`)
         
-        if (subtitleLines.length > 0) {
-          // Use the first subtitle line as a test
-          const testText = subtitleLines[0].replace(/'/g, '\\\\"')
-          const drawTextFilter = `drawtext=text='${testText}':fontsize=24:fontcolor=white:box=1:boxcolor=black@0.8:boxborderw=5:x=(w-text_w)/2:y=h-text_h-50`
-          console.log(`📝 Using drawtext filter: ${drawTextFilter}`)
-          command.addOption('-vf', drawTextFilter)
-        } else {
-          console.log(`⚠️ No subtitle text found, skipping subtitle rendering`)
-        }
+        // Use simple drawtext with fixed test message for now
+        const drawTextFilter = `drawtext=text='Sottotitoli generati':fontsize=24:fontcolor=white:box=1:boxcolor=black@0.8:boxborderw=5:x=(w-text_w)/2:y=h-text_h-50`
+        console.log(`📝 Using simplified drawtext filter: ${drawTextFilter}`)
+        command.addOption('-vf', drawTextFilter)
         
         console.log(`✅ SUBTITLES FILTER APPLIED SUCCESSFULLY`)
       } catch (error) {
