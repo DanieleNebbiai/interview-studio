@@ -74,23 +74,11 @@ export async function generateSubtitleFile(
   videoSections: ExportJobData['videoSections'],
   jobId: string
 ): Promise<string> {
-  const subtitlePath = path.join(TEMP_DIR, `${jobId}_subtitles.ass`)
+  const subtitlePath = path.join(TEMP_DIR, `${jobId}_subtitles.srt`)
   
-  // Create ASS subtitle format for better styling (like live captions)
-  let assContent = `[Script Info]
-Title: Interview Studio Export
-ScriptType: v4.00+
-
-[V4+ Styles]
-Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-Style: Participant1,Arial,24,&H00FFFFFF,&H00000000,&H00000000,&H80000000,1,0,0,0,100,100,0,0,1,2,0,2,10,10,30,1
-Style: Participant2,Arial,24,&H0099FFFF,&H00000000,&H00000000,&H80000000,1,0,0,0,100,100,0,0,1,2,0,2,10,10,30,1
-Style: Active,Arial,26,&H00000000,&H0000FFFF,&H00000000,&H00FFFF00,1,0,0,0,100,100,0,0,1,2,0,2,10,10,30,1
-
-[Events]
-Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
-
-`
+  // Create SRT subtitle format (more compatible than ASS)
+  let srtContent = ''
+  let subtitleIndex = 1
   
   // Collect all words from all participants with timing
   const allWords: Array<{
@@ -172,28 +160,34 @@ Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
     })
   }
   
-  // Generate ASS events for each phrase
+  // Generate SRT events for each phrase
   phrases.forEach((phrase) => {
-    const startTime = formatASSTime(phrase.startTime)
-    const endTime = formatASSTime(phrase.endTime)
-    const style = `Participant${phrase.participantIndex}`
+    const startTime = formatSRTTime(phrase.startTime)
+    const endTime = formatSRTTime(phrase.endTime)
+    
+    // Add participant indicator and text
+    const participantLabel = `[Partecipante ${phrase.participantIndex}]`
     const text = phrase.words.map(w => w.word).join(' ')
     
-    assContent += `Dialogue: 0,${startTime},${endTime},${style},,0,0,0,,${text}\n`
+    srtContent += `${subtitleIndex}\n`
+    srtContent += `${startTime} --> ${endTime}\n`
+    srtContent += `${participantLabel} ${text}\n\n`
+    
+    subtitleIndex++
   })
   
-  fs.writeFileSync(subtitlePath, assContent, 'utf8')
+  fs.writeFileSync(subtitlePath, srtContent, 'utf8')
   return subtitlePath
 }
 
-// Format time for ASS (H:MM:SS.cc)
-function formatASSTime(seconds: number): string {
+// Format time for SRT (HH:MM:SS,mmm)
+function formatSRTTime(seconds: number): string {
   const hours = Math.floor(seconds / 3600)
   const minutes = Math.floor((seconds % 3600) / 60)
   const secs = Math.floor(seconds % 60)
-  const centiseconds = Math.floor((seconds % 1) * 100)
+  const ms = Math.floor((seconds % 1) * 1000)
   
-  return `${hours}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}.${centiseconds.toString().padStart(2, '0')}`
+  return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')},${ms.toString().padStart(3, '0')}`
 }
 
 // Build FFmpeg command for multi-video export
@@ -351,8 +345,8 @@ export function buildFFmpegCommand(data: {
         const firstLines = subtitleContent.split('\n').slice(0, 5).join('\n')
         console.log(`📝 Subtitle file preview:\n${firstLines}`)
         
-        // Use subtitles filter to burn them into the video
-        const subtitleFilter = `subtitles='${subtitleFile}':force_style='Fontsize=24,PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,Outline=2'`
+        // Use subtitles filter for SRT (more compatible)
+        const subtitleFilter = `subtitles='${subtitleFile}':force_style='FontSize=20,PrimaryColour=&Hffffff,OutlineColour=&H000000,BackColour=&H80000000'`
         console.log(`📝 Using subtitle filter: ${subtitleFilter}`)
         command.addOption('-vf', subtitleFilter)
         
