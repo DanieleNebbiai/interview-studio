@@ -324,17 +324,8 @@ export function buildFFmpegCommand(data: {
         finalAudioStream = '[a0]'
       }
       
-      // Check if subtitles were added and update stream names
-      if (subtitleFile && settings.includeSubtitles) {
-        if (segmentOutputs.length > 1) {
-          finalVideoStream = '[finalvideo_sub]'
-        } else if (segmentOutputs.length === 1) {
-          finalVideoStream = '[v0_sub]'
-        }
-      }
-      
-      console.log(`🎯 Using final streams: video=${finalVideoStream}, audio=${finalAudioStream}`)
-      command.map(finalVideoStream).map(finalAudioStream)
+      // Note: finalVideoStream will be updated later when subtitles are added
+      // Mapping will be done after subtitle processing
     } else {
       console.log('⚠️ No complex filters generated - using simple approach for single video')
       // Fallback for single video without sections
@@ -370,12 +361,15 @@ export function buildFFmpegCommand(data: {
         console.log(`📝 Adding subtitles to complex filter: ${subtitlesFilter}`)
         
         // Add subtitles filter to the final video output
-        if (segmentOutputs.length > 1) {
+        // Check the actual final video stream name being used
+        if (finalVideoStream === '[finalvideo]') {
           // Multiple segments - add subtitles to final video
           filterComplex.push(`[finalvideo]${subtitlesFilter}[finalvideo_sub]`)
-        } else if (segmentOutputs.length === 1) {
+          finalVideoStream = '[finalvideo_sub]' // Update for mapping
+        } else if (finalVideoStream === '[v0]') {
           // Single segment - add subtitles to v0
           filterComplex.push(`[v0]${subtitlesFilter}[v0_sub]`)
+          finalVideoStream = '[v0_sub]' // Update for mapping
         }
         
         console.log(`✅ SUBTITLES INTEGRATED INTO COMPLEX FILTER`)
@@ -390,6 +384,12 @@ export function buildFFmpegCommand(data: {
       console.log(`✅ SIMPLE SUBTITLES FILTER APPLIED`)
     } else {
       console.log(`⚠️ Subtitles SKIPPED: file=${!!subtitleFile}, includeSubtitles=${settings.includeSubtitles}, complexFilters=${filterComplex.length}`)
+    }
+    
+    // Apply final stream mapping after all processing is done
+    if (filterComplex.length > 0) {
+      console.log(`🎯 Final mapping: video=${finalVideoStream}, audio=${finalAudioStream}`)
+      command.map(finalVideoStream).map(finalAudioStream)
     }
     
     command.output(outputPath)
