@@ -236,7 +236,7 @@ export function buildFFmpegCommand(data: {
           console.log(`🎯 Section ${index}: FOCUS on recording ${focusedRecordingId} (video ${focusVideoIndex})`)
           // Full screen for focused participant
           filterComplex.push(
-            `[${focusVideoIndex}:v]trim=${section.startTime.toFixed(2)}:${section.endTime.toFixed(2)},setpts=PTS/${speed},scale=1920:1080[v${index}]`,
+            `[${focusVideoIndex}:v]trim=${section.startTime.toFixed(2)}:${section.endTime.toFixed(2)},setpts=PTS/${speed},scale=1280:720[v${index}]`,
             `[${focusVideoIndex}:a]atrim=${section.startTime.toFixed(2)}:${section.endTime.toFixed(2)},asetpts=PTS/${speed}[a${index}]`
           )
         } else {
@@ -348,7 +348,7 @@ export function buildFFmpegCommand(data: {
       .videoBitrate(getVideoBitrate(settings.quality))
       .audioBitrate('128k')
       .fps(settings.framerate)
-      .addOption('-preset', 'fast') // Faster encoding
+      .addOption('-preset', 'ultrafast') // Much faster encoding for Railway
       .addOption('-profile:v', 'high') // High profile for better compatibility
       .addOption('-level', '4.0') // Level 4.0 for compatibility
       .addOption('-pix_fmt', 'yuv420p') // Pixel format for compatibility
@@ -371,6 +371,10 @@ export function buildFFmpegCommand(data: {
       })
       .on('progress', (progress) => {
         console.log('🎬 FFmpeg progress:', JSON.stringify(progress, null, 2))
+        // Heartbeat to prevent Railway timeout
+        if (progress.percent) {
+          console.log(`💓 Processing heartbeat: ${progress.percent}%`)
+        }
       })
       .on('stderr', (stderrLine) => {
         console.log('🎬 FFmpeg stderr:', stderrLine)
@@ -406,10 +410,10 @@ export function buildFFmpegCommand(data: {
 
 function getVideoBitrate(quality: string): string {
   switch (quality) {
-    case '4k': return '8000k'
-    case '1080p': return '2000k'
-    case '720p': return '1000k'
-    default: return '1000k'
+    case '4k': return '4000k'      // Reduced for Railway
+    case '1080p': return '1000k'   // Reduced for Railway  
+    case '720p': return '500k'     // Reduced for Railway
+    default: return '500k'         // Default reduced for Railway
   }
 }
 
