@@ -287,12 +287,12 @@ export function buildFFmpegCommand(data: {
       // No additional filter needed, [v0] becomes [finalvideo], [a0] becomes [finalaudio]
     }
     
-    // TEMP: Simplified approach without complex filters
-    console.log('🎬 Using simplified FFmpeg approach for debugging')
+    // Use proper complex filters for multi-video layout
+    console.log('🎬 Using complex FFmpeg filters for multi-video layout')
     console.log('📊 Video sections:', JSON.stringify(validSections, null, 2))
     console.log('📊 Input videos:', JSON.stringify(inputVideos, null, 2))
     
-    // Check if input video exists and get its info
+    // Check if input videos exist
     console.log('🔍 Checking input videos...')
     inputVideos.forEach((video, index) => {
       try {
@@ -307,36 +307,24 @@ export function buildFFmpegCommand(data: {
       }
     })
     
-    // Simple trim without complex filters with bounds checking
-    let startTime = Math.max(0, validSections[0].startTime)
-    const endTime = validSections[0].endTime
-    let duration = endTime - startTime
-    
-    console.log(`⏱️ Original section: ${validSections[0].startTime.toFixed(2)}s to ${validSections[0].endTime.toFixed(2)}s`)
-    
-    // CRITICAL: For videos with ~16.8s duration, seeking to 16.78s leaves almost no content
-    // We need to ensure there's meaningful content to extract
-    const videoDuration = 16.8 // We know from logs this video is 16.8s
-    
-    if (startTime > videoDuration - 2) {
-      // If start time is too close to end, adjust to get at least 2 seconds
-      startTime = Math.max(0, videoDuration - 3)
-      duration = Math.min(3, videoDuration - startTime)
-      console.log(`🔧 ADJUSTED: Start too close to end, using start=${startTime.toFixed(2)}s, duration=${duration.toFixed(2)}s`)
+    // Apply complex filters for proper multi-video layout
+    if (filterComplex.length > 0) {
+      console.log('🎨 Applying complex filter graph:', filterComplex.join('; '))
+      command.complexFilter(filterComplex)
+      
+      // Use the final outputs from complex filter
+      if (segmentOutputs.length > 1) {
+        command.map('[finalvideo]').map('[finalaudio]')
+      } else if (segmentOutputs.length === 1) {
+        command.map('[v0]').map('[a0]')
+      }
+    } else {
+      console.log('⚠️ No complex filters generated - using simple approach for single video')
+      // Fallback for single video without sections
+      const startTime = 0
+      const duration = Math.min(60, 300) // Max 5 minutes for safety
+      command.seek(startTime).duration(duration)
     }
-    
-    // Round to reasonable precision - FFmpeg has issues with extreme decimal precision
-    const finalStartTime = Math.round(startTime * 100) / 100  // 2 decimal places
-    const finalDuration = Math.round(duration * 100) / 100    // 2 decimal places
-    
-    console.log(`✅ Final parameters: start=${finalStartTime}s, duration=${finalDuration}s`)
-    
-    command
-      .seek(finalStartTime)
-      .duration(finalDuration)
-    
-    // TEMP: Skip all complex filtering - use simple seek/duration approach
-    console.log('⚠️ Skipping complex filters - using simple seek/duration approach')
     
     // Output settings with explicit codecs for compatibility
     command
