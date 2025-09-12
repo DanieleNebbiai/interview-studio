@@ -204,7 +204,8 @@ async function processExportJob(jobId: string, jobData: ExportJobData) {
       videoSections,
       focusSegments,
       subtitleFile,
-      settings: exportSettings
+      settings: exportSettings,
+      recordings
     })
     
     await updateJobProgress(jobId, {

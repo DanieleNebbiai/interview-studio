@@ -219,10 +219,11 @@ export function buildFFmpegCommand(data: {
   focusSegments: ExportJobData['focusSegments']
   subtitleFile?: string
   settings: ExportJobData['exportSettings']
+  recordings: ExportJobData['recordings']
 }): Promise<string> {
   
   return new Promise((resolve, reject) => {
-    const { inputVideos, outputPath, videoSections, focusSegments, subtitleFile, settings } = data
+    const { inputVideos, outputPath, videoSections, focusSegments, subtitleFile, settings, recordings } = data
     
     const command = ffmpeg()
     
@@ -236,23 +237,54 @@ export function buildFFmpegCommand(data: {
     const filterComplex: string[] = []
     const segmentOutputs: string[] = []
     
-    // Process each valid section
+    // Create participant to video index mapping
+    const participantVideoMap: { [key: string]: number } = {}
+    recordings.forEach((recording, index) => {
+      if (recording.participant_id) {
+        participantVideoMap[recording.participant_id] = index
+      }
+    })
+    console.log('👥 Participant to video mapping:', participantVideoMap)
+    
+    // Process each valid section with dynamic focus
     validSections.forEach((section, index) => {
-      // const duration = section.endTime - section.startTime
       const speed = section.playbackSpeed
       
-      // Check if this section has focus
-      const activeFocus = focusSegments.find(focus =>
-        section.startTime >= focus.startTime && section.endTime <= focus.endTime
+      // Find overlapping focus segments for this section
+      const overlappingFocus = focusSegments.filter(focus =>
+        focus.startTime < section.endTime && focus.endTime > section.startTime
       )
       
-      if (activeFocus && inputVideos.length > 1) {
-        // Focus mode - show only focused video
-        const focusIndex = 0 // For now, focus on first video (can be improved)
-        filterComplex.push(
-          `[${focusIndex}:v]trim=${section.startTime.toFixed(2)}:${section.endTime.toFixed(2)},setpts=PTS/${speed}[v${index}]`,
-          `[${focusIndex}:a]atrim=${section.startTime.toFixed(2)}:${section.endTime.toFixed(2)},asetpts=PTS/${speed}[a${index}]`
-        )
+      console.log(`📹 Section ${index}: ${section.startTime.toFixed(2)}s-${section.endTime.toFixed(2)}s, focus segments:`, 
+        overlappingFocus.map(f => `${f.focusedParticipantId} (${f.startTime.toFixed(2)}s-${f.endTime.toFixed(2)}s)`))
+      
+      if (overlappingFocus.length > 0 && inputVideos.length > 1) {
+        // Focus mode - need to create dynamic layout based on focus changes
+        const dominantFocus = overlappingFocus[0] // Use first overlapping focus for now
+        const focusedParticipantId = dominantFocus.focusedParticipantId
+        const focusVideoIndex = participantVideoMap[focusedParticipantId]
+        
+        if (focusVideoIndex !== undefined) {
+          console.log(`🎯 Section ${index}: FOCUS on participant ${focusedParticipantId} (video ${focusVideoIndex})`)
+          // Full screen for focused participant
+          filterComplex.push(
+            `[${focusVideoIndex}:v]trim=${section.startTime.toFixed(2)}:${section.endTime.toFixed(2)},setpts=PTS/${speed},scale=1920:1080[v${index}]`,
+            `[${focusVideoIndex}:a]atrim=${section.startTime.toFixed(2)}:${section.endTime.toFixed(2)},asetpts=PTS/${speed}[a${index}]`
+          )
+        } else {
+          console.log(`⚠️ Section ${index}: Focus participant ${focusedParticipantId} not found in video mapping, using grid`)
+          // Fallback to grid if participant not found
+          if (inputVideos.length === 2) {
+            filterComplex.push(
+              `[0:v]trim=${section.startTime.toFixed(2)}:${section.endTime.toFixed(2)},setpts=PTS/${speed},scale=960:540[v0_${index}]`,
+              `[1:v]trim=${section.startTime.toFixed(2)}:${section.endTime.toFixed(2)},setpts=PTS/${speed},scale=960:540[v1_${index}]`,
+              `[v0_${index}][v1_${index}]hstack[v${index}]`,
+              `[0:a]atrim=${section.startTime.toFixed(2)}:${section.endTime.toFixed(2)},asetpts=PTS/${speed}[a0_${index}]`,
+              `[1:a]atrim=${section.startTime.toFixed(2)}:${section.endTime.toFixed(2)},asetpts=PTS/${speed}[a1_${index}]`,
+              `[a0_${index}][a1_${index}]amix=inputs=2[a${index}]`
+            )
+          }
+        }
       } else {
         // Grid mode - show all videos
         if (inputVideos.length === 1) {
@@ -308,16 +340,33 @@ export function buildFFmpegCommand(data: {
     })
     
     // Apply complex filters for proper multi-video layout
+    let finalVideoStream = '[v0]'
+    let finalAudioStream = '[a0]'
+    
     if (filterComplex.length > 0) {
       console.log('🎨 Applying complex filter graph:', filterComplex.join('; '))
       command.complexFilter(filterComplex)
       
-      // Use the final outputs from complex filter
+      // Determine final stream names based on segments and subtitles
       if (segmentOutputs.length > 1) {
-        command.map('[finalvideo]').map('[finalaudio]')
+        finalVideoStream = '[finalvideo]'
+        finalAudioStream = '[finalaudio]'
       } else if (segmentOutputs.length === 1) {
-        command.map('[v0]').map('[a0]')
+        finalVideoStream = '[v0]'
+        finalAudioStream = '[a0]'
       }
+      
+      // Check if subtitles were added and update stream names
+      if (subtitleFile && settings.includeSubtitles) {
+        if (segmentOutputs.length > 1) {
+          finalVideoStream = '[finalvideo_sub]'
+        } else if (segmentOutputs.length === 1) {
+          finalVideoStream = '[v0_sub]'
+        }
+      }
+      
+      console.log(`🎯 Using final streams: video=${finalVideoStream}, audio=${finalAudioStream}`)
+      command.map(finalVideoStream).map(finalAudioStream)
     } else {
       console.log('⚠️ No complex filters generated - using simple approach for single video')
       // Fallback for single video without sections
@@ -339,48 +388,40 @@ export function buildFFmpegCommand(data: {
       .addOption('-level', '4.0') // Level 4.0 for compatibility
       .addOption('-pix_fmt', 'yuv420p') // Pixel format for compatibility
     
-    // Add subtitles if provided (must be after codec settings)
+    // Integrate subtitles into complex filter graph if needed
     console.log(`🔍 Subtitle check: file=${subtitleFile}, includeSubtitles=${settings.includeSubtitles}`)
     
-    if (subtitleFile && settings.includeSubtitles) {
-      console.log(`📝 ATTEMPTING to add ASS subtitles: ${subtitleFile}`)
-      // Verify file exists
+    if (subtitleFile && settings.includeSubtitles && filterComplex.length > 0) {
+      console.log(`📝 Integrating subtitles into complex filter graph: ${subtitleFile}`)
       try {
         const subtitleStats = fs.statSync(subtitleFile)
         console.log(`📝 Subtitle file verified - size: ${subtitleStats.size} bytes`)
         
-        // Read first few lines of subtitle file for debugging
-        const subtitleContent = fs.readFileSync(subtitleFile, 'utf8')
-        const firstLines = subtitleContent.split('\n').slice(0, 5).join('\n')
-        console.log(`📝 Subtitle file preview:\n${firstLines}`)
-        
-        // Use drawtext filter instead of subtitles (no font dependencies)
-        // First, let's read the subtitle content to extract text
-        const subtitleLines = subtitleContent.split('\n').filter(line => 
-          line.trim() && 
-          !line.match(/^\d+$/) && // Not a number line
-          !line.includes('-->') && // Not a timestamp line
-          line.trim() !== ''
-        )
-        
-        console.log(`📝 Extracted subtitle texts: ${subtitleLines.length} lines`)
-        
-        // Use subtitles filter with SRT file - should work better than drawtext
-        console.log(`📝 Using subtitles filter with SRT file: ${subtitleFile}`)
-        
-        // Simple approach: let FFmpeg handle the subtitle file directly
-        // This should work with basic fonts that we installed
+        // Add subtitles filter to the final video stream in complex filter
         const subtitlesFilter = `subtitles=${subtitleFile}:force_style='FontName=DejaVu Sans,FontSize=18,PrimaryColour=&Hffffff,OutlineColour=&H000000,Outline=1,Shadow=1'`
-        console.log(`📝 Subtitles filter: ${subtitlesFilter}`)
+        console.log(`📝 Adding subtitles to complex filter: ${subtitlesFilter}`)
         
-        command.addOption('-vf', subtitlesFilter)
+        // Add subtitles filter to the final video output
+        if (segmentOutputs.length > 1) {
+          // Multiple segments - add subtitles to final video
+          filterComplex.push(`[finalvideo]${subtitlesFilter}[finalvideo_sub]`)
+        } else if (segmentOutputs.length === 1) {
+          // Single segment - add subtitles to v0
+          filterComplex.push(`[v0]${subtitlesFilter}[v0_sub]`)
+        }
         
-        console.log(`✅ SUBTITLES FILTER APPLIED SUCCESSFULLY`)
+        console.log(`✅ SUBTITLES INTEGRATED INTO COMPLEX FILTER`)
       } catch (error) {
         console.error(`❌ Subtitle file error: ${subtitleFile}`, error)
       }
+    } else if (subtitleFile && settings.includeSubtitles && filterComplex.length === 0) {
+      // Fallback: use -vf for simple cases without complex filters
+      console.log(`📝 Using simple -vf subtitles filter: ${subtitleFile}`)
+      const subtitlesFilter = `subtitles=${subtitleFile}:force_style='FontName=DejaVu Sans,FontSize=18,PrimaryColour=&Hffffff,OutlineColour=&H000000,Outline=1,Shadow=1'`
+      command.addOption('-vf', subtitlesFilter)
+      console.log(`✅ SIMPLE SUBTITLES FILTER APPLIED`)
     } else {
-      console.log(`⚠️ Subtitles SKIPPED: file=${!!subtitleFile}, includeSubtitles=${settings.includeSubtitles}`)
+      console.log(`⚠️ Subtitles SKIPPED: file=${!!subtitleFile}, includeSubtitles=${settings.includeSubtitles}, complexFilters=${filterComplex.length}`)
     }
     
     command.output(outputPath)
