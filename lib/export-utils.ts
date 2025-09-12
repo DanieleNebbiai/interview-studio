@@ -213,18 +213,55 @@ export function buildFFmpegCommand(data: {
     })
     console.log('👥 Recording to video mapping:', recordingVideoMap)
     
-    // SIMPLIFIED APPROACH: Use 50/50 layout for now to avoid concat timing issues
-    // Focus functionality temporarily disabled to fix duration problem
+    // OVERLAY-BASED FOCUS: Base 50/50 with dynamic full-screen overlays
     const section = validSections[0] // Use only first section for now
-    console.log(`📹 SIMPLIFIED: Processing section ${section.startTime.toFixed(2)}s-${section.endTime.toFixed(2)}s`)
-    console.log(`⚠️ Focus segments temporarily disabled to fix duration issue`)
+    console.log(`📹 Processing section ${section.startTime.toFixed(2)}s-${section.endTime.toFixed(2)}s`)
+    console.log(`🎯 Focus segments:`, focusSegments)
     
     if (inputVideos.length === 2) {
-      console.log(`📱 Creating simple 50/50 grid for entire video duration`)
+      // Create base 50/50 layout
+      console.log(`📱 Creating base 50/50 grid with focus overlays`)
       filterComplex.push(
         `[0:v]trim=${section.startTime.toFixed(2)}:${section.endTime.toFixed(2)},scale=640:720,setsar=1/1[v0]`,
         `[1:v]trim=${section.startTime.toFixed(2)}:${section.endTime.toFixed(2)},scale=640:720,setsar=1/1[v1]`,
-        `[v0][v1]hstack[finalvideo]`,
+        `[v0][v1]hstack[base_video]`
+      )
+      
+      // Create full-screen versions for focus overlays
+      filterComplex.push(
+        `[0:v]trim=${section.startTime.toFixed(2)}:${section.endTime.toFixed(2)},scale=1280:720,setsar=1/1[full0]`,
+        `[1:v]trim=${section.startTime.toFixed(2)}:${section.endTime.toFixed(2)},scale=1280:720,setsar=1/1[full1]`
+      )
+      
+      let currentVideoStream = '[base_video]'
+      
+      // Apply focus overlays based on focus segments
+      focusSegments.forEach((fs, index) => {
+        if (fs.focusedParticipantId && recordingVideoMap[fs.focusedParticipantId] !== undefined) {
+          const videoIndex = recordingVideoMap[fs.focusedParticipantId]
+          const overlayName = `overlay${index}`
+          
+          console.log(`🎯 Adding focus overlay ${index}: participant ${fs.focusedParticipantId} (video ${videoIndex}) from ${fs.startTime.toFixed(2)}s to ${fs.endTime.toFixed(2)}s`)
+          
+          // Create overlay filter with enable expression for time range
+          const enableExpr = `'between(t,${fs.startTime.toFixed(2)},${fs.endTime.toFixed(2)})'`
+          filterComplex.push(
+            `${currentVideoStream}[full${videoIndex}]overlay=enable=${enableExpr}[${overlayName}]`
+          )
+          
+          currentVideoStream = `[${overlayName}]`
+        }
+      })
+      
+      // Set final video stream
+      if (currentVideoStream !== '[base_video]') {
+        filterComplex.push(`${currentVideoStream}null[finalvideo]`)
+      } else {
+        filterComplex.push(`[base_video]null[finalvideo]`)
+      }
+      
+      // Audio mixing (always mix both participants)
+      filterComplex.push(
         `[0:a]atrim=${section.startTime.toFixed(2)}:${section.endTime.toFixed(2)}[a0]`,
         `[1:a]atrim=${section.startTime.toFixed(2)}:${section.endTime.toFixed(2)}[a1]`,
         `[a0][a1]amix=inputs=2[finalaudio]`
