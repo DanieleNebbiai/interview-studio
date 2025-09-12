@@ -287,6 +287,24 @@ export function buildFFmpegCommand(data: {
       // No additional filter needed, [v0] becomes [finalvideo], [a0] becomes [finalaudio]
     }
     
+    // Add subtitles to complex filter BEFORE applying it
+    let finalVideoStreamName = segmentOutputs.length > 1 ? '[finalvideo]' : '[v0]'
+    let finalAudioStreamName = segmentOutputs.length > 1 ? '[finalaudio]' : '[a0]'
+    
+    if (subtitleFile && settings.includeSubtitles && filterComplex.length > 0) {
+      console.log(`📝 Adding subtitles to complex filter BEFORE applying: ${subtitleFile}`)
+      const subtitlesFilter = `subtitles=${subtitleFile}:force_style='FontName=DejaVu Sans,FontSize=18,PrimaryColour=&Hffffff,OutlineColour=&H000000,Outline=1,Shadow=1'`
+      
+      if (segmentOutputs.length > 1) {
+        filterComplex.push(`[finalvideo]${subtitlesFilter}[finalvideo_sub]`)
+        finalVideoStreamName = '[finalvideo_sub]'
+      } else {
+        filterComplex.push(`[v0]${subtitlesFilter}[v0_sub]`)
+        finalVideoStreamName = '[v0_sub]'
+      }
+      console.log(`✅ Subtitles added to filterComplex, final video stream: ${finalVideoStreamName}`)
+    }
+    
     // Use proper complex filters for multi-video layout
     console.log('🎬 Using complex FFmpeg filters for multi-video layout')
     console.log('📊 Video sections:', JSON.stringify(validSections, null, 2))
@@ -308,24 +326,12 @@ export function buildFFmpegCommand(data: {
     })
     
     // Apply complex filters for proper multi-video layout
-    let finalVideoStream = '[v0]'
-    let finalAudioStream = '[a0]'
-    
     if (filterComplex.length > 0) {
       console.log('🎨 Applying complex filter graph:', filterComplex.join('; '))
       command.complexFilter(filterComplex)
       
-      // Determine final stream names based on segments and subtitles
-      if (segmentOutputs.length > 1) {
-        finalVideoStream = '[finalvideo]'
-        finalAudioStream = '[finalaudio]'
-      } else if (segmentOutputs.length === 1) {
-        finalVideoStream = '[v0]'
-        finalAudioStream = '[a0]'
-      }
-      
-      // Note: finalVideoStream will be updated later when subtitles are added
-      // Mapping will be done after subtitle processing
+      console.log(`🎯 Using final streams: video=${finalVideoStreamName}, audio=${finalAudioStreamName}`)
+      command.map(finalVideoStreamName).map(finalAudioStreamName)
     } else {
       console.log('⚠️ No complex filters generated - using simple approach for single video')
       // Fallback for single video without sections
@@ -347,49 +353,12 @@ export function buildFFmpegCommand(data: {
       .addOption('-level', '4.0') // Level 4.0 for compatibility
       .addOption('-pix_fmt', 'yuv420p') // Pixel format for compatibility
     
-    // Integrate subtitles into complex filter graph if needed
-    console.log(`🔍 Subtitle check: file=${subtitleFile}, includeSubtitles=${settings.includeSubtitles}`)
-    
-    if (subtitleFile && settings.includeSubtitles && filterComplex.length > 0) {
-      console.log(`📝 Integrating subtitles into complex filter graph: ${subtitleFile}`)
-      try {
-        const subtitleStats = fs.statSync(subtitleFile)
-        console.log(`📝 Subtitle file verified - size: ${subtitleStats.size} bytes`)
-        
-        // Add subtitles filter to the final video stream in complex filter
-        const subtitlesFilter = `subtitles=${subtitleFile}:force_style='FontName=DejaVu Sans,FontSize=18,PrimaryColour=&Hffffff,OutlineColour=&H000000,Outline=1,Shadow=1'`
-        console.log(`📝 Adding subtitles to complex filter: ${subtitlesFilter}`)
-        
-        // Add subtitles filter to the final video output
-        // Check the actual final video stream name being used
-        if (finalVideoStream === '[finalvideo]') {
-          // Multiple segments - add subtitles to final video
-          filterComplex.push(`[finalvideo]${subtitlesFilter}[finalvideo_sub]`)
-          finalVideoStream = '[finalvideo_sub]' // Update for mapping
-        } else if (finalVideoStream === '[v0]') {
-          // Single segment - add subtitles to v0
-          filterComplex.push(`[v0]${subtitlesFilter}[v0_sub]`)
-          finalVideoStream = '[v0_sub]' // Update for mapping
-        }
-        
-        console.log(`✅ SUBTITLES INTEGRATED INTO COMPLEX FILTER`)
-      } catch (error) {
-        console.error(`❌ Subtitle file error: ${subtitleFile}`, error)
-      }
-    } else if (subtitleFile && settings.includeSubtitles && filterComplex.length === 0) {
-      // Fallback: use -vf for simple cases without complex filters
+    // Subtitle handling for simple cases (no complex filters)
+    if (subtitleFile && settings.includeSubtitles && filterComplex.length === 0) {
       console.log(`📝 Using simple -vf subtitles filter: ${subtitleFile}`)
       const subtitlesFilter = `subtitles=${subtitleFile}:force_style='FontName=DejaVu Sans,FontSize=18,PrimaryColour=&Hffffff,OutlineColour=&H000000,Outline=1,Shadow=1'`
       command.addOption('-vf', subtitlesFilter)
       console.log(`✅ SIMPLE SUBTITLES FILTER APPLIED`)
-    } else {
-      console.log(`⚠️ Subtitles SKIPPED: file=${!!subtitleFile}, includeSubtitles=${settings.includeSubtitles}, complexFilters=${filterComplex.length}`)
-    }
-    
-    // Apply final stream mapping after all processing is done
-    if (filterComplex.length > 0) {
-      console.log(`🎯 Final mapping: video=${finalVideoStream}, audio=${finalAudioStream}`)
-      command.map(finalVideoStream).map(finalAudioStream)
     }
     
     command.output(outputPath)
