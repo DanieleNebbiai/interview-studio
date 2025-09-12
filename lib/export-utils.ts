@@ -289,7 +289,7 @@ export function buildFFmpegCommand(data: {
     
     // Add subtitles to complex filter BEFORE applying it
     let finalVideoStreamName = segmentOutputs.length > 1 ? '[finalvideo]' : '[v0]'
-    let finalAudioStreamName = segmentOutputs.length > 1 ? '[finalaudio]' : '[a0]'
+    const finalAudioStreamName = segmentOutputs.length > 1 ? '[finalaudio]' : '[a0]'
     
     if (subtitleFile && settings.includeSubtitles && filterComplex.length > 0) {
       console.log(`📝 Adding subtitles to complex filter BEFORE applying: ${subtitleFile}`)
