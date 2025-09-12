@@ -237,8 +237,7 @@ export function buildFFmpegCommand(data: {
       )
     }
     
-    // Skip segmentOutputs logic for now
-    segmentOutputs = []
+    // Skip segmentOutputs logic for now - array remains empty
     
     // No concatenation needed for simplified single section approach
     console.log('📊 Using direct [finalvideo] and [finalaudio] streams from filter')
