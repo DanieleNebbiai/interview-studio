@@ -207,14 +207,12 @@ export function buildFFmpegCommand(data: {
     const filterComplex: string[] = []
     const segmentOutputs: string[] = []
     
-    // Create participant to video index mapping
-    const participantVideoMap: { [key: string]: number } = {}
+    // Create recording ID to video index mapping (focus segments use recording_id)
+    const recordingVideoMap: { [key: string]: number } = {}
     recordings.forEach((recording, index) => {
-      if (recording.participant_id) {
-        participantVideoMap[recording.participant_id] = index
-      }
+      recordingVideoMap[recording.id] = index
     })
-    console.log('👥 Participant to video mapping:', participantVideoMap)
+    console.log('👥 Recording to video mapping:', recordingVideoMap)
     
     // Process each valid section with dynamic focus
     validSections.forEach((section, index) => {
@@ -231,18 +229,18 @@ export function buildFFmpegCommand(data: {
       if (overlappingFocus.length > 0 && inputVideos.length > 1) {
         // Focus mode - need to create dynamic layout based on focus changes
         const dominantFocus = overlappingFocus[0] // Use first overlapping focus for now
-        const focusedParticipantId = dominantFocus.focusedParticipantId
-        const focusVideoIndex = participantVideoMap[focusedParticipantId]
+        const focusedRecordingId = dominantFocus.focusedParticipantId // Actually recording_id
+        const focusVideoIndex = recordingVideoMap[focusedRecordingId]
         
         if (focusVideoIndex !== undefined) {
-          console.log(`🎯 Section ${index}: FOCUS on participant ${focusedParticipantId} (video ${focusVideoIndex})`)
+          console.log(`🎯 Section ${index}: FOCUS on recording ${focusedRecordingId} (video ${focusVideoIndex})`)
           // Full screen for focused participant
           filterComplex.push(
             `[${focusVideoIndex}:v]trim=${section.startTime.toFixed(2)}:${section.endTime.toFixed(2)},setpts=PTS/${speed},scale=1920:1080[v${index}]`,
             `[${focusVideoIndex}:a]atrim=${section.startTime.toFixed(2)}:${section.endTime.toFixed(2)},asetpts=PTS/${speed}[a${index}]`
           )
         } else {
-          console.log(`⚠️ Section ${index}: Focus participant ${focusedParticipantId} not found in video mapping, using grid`)
+          console.log(`⚠️ Section ${index}: Focus recording ${focusedRecordingId} not found in video mapping, using grid`)
           // Fallback to grid if participant not found
           if (inputVideos.length === 2) {
             filterComplex.push(
