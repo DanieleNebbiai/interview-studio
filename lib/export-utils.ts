@@ -216,7 +216,7 @@ export function buildFFmpegCommand(data: {
     
     // Process each valid section with dynamic focus
     validSections.forEach((section, index) => {
-      const speed = section.playbackSpeed
+      const speed = 1.0 // Temporarily disable playback speed to debug duration
       
       // Find overlapping focus segments for this section
       const overlappingFocus = focusSegments.filter(focus =>
