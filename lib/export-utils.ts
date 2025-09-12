@@ -81,76 +81,94 @@ export async function generateSubtitleFile(
   // Sort by start time
   allWords.sort((a, b) => a.start - b.start)
   
-  // Replicate live captions behavior: show words with 3-second window
-  // Create subtitle entries that match the live caption display
+  // CHUNKING: Group words into phrases based on natural pauses
+  const gapThreshold = 1.0 // 1 second gap = new phrase
   const showWindow = 3.0 // Same 3-second window as in the editor
   
-  console.log(`Generating live-caption style subtitles for ${allWords.length} words with ${showWindow}s window`)
+  console.log(`Creating phrase chunks from ${allWords.length} words with ${gapThreshold}s gap threshold`)
   
-  // Create time intervals where captions should be visible
-  // Find all significant time points (word starts and ends)
-  const timePoints = new Set<number>()
+  // Group words into phrase chunks
+  const phraseChunks: Array<{
+    words: typeof allWords
+    startTime: number
+    endTime: number
+    participantIndex: number
+  }> = []
   
-  allWords.forEach(word => {
-    // Add time points for the visibility window
-    timePoints.add(Math.max(0, word.start - showWindow))
-    timePoints.add(word.start)
-    timePoints.add(word.end)
-    timePoints.add(word.end + showWindow)
+  let currentChunk: typeof allWords = []
+  
+  for (let i = 0; i < allWords.length; i++) {
+    const word = allWords[i]
+    const nextWord = allWords[i + 1]
+    
+    currentChunk.push(word)
+    
+    // Check if we should end this chunk
+    const shouldEndChunk = !nextWord || // Last word
+      (nextWord.start - word.end > gapThreshold) || // Gap too large
+      (nextWord.participantIndex !== word.participantIndex) // Different speaker
+    
+    if (shouldEndChunk && currentChunk.length > 0) {
+      const chunkStart = currentChunk[0].start
+      const chunkEnd = currentChunk[currentChunk.length - 1].end
+      
+      phraseChunks.push({
+        words: [...currentChunk],
+        startTime: chunkStart,
+        endTime: chunkEnd,
+        participantIndex: currentChunk[0].participantIndex
+      })
+      
+      currentChunk = []
+    }
+  }
+  
+  console.log(`Created ${phraseChunks.length} phrase chunks`)
+  
+  // Generate subtitles for each phrase chunk
+  phraseChunks.forEach(chunk => {
+    console.log(`Chunk: "${chunk.words.map(w => w.word).join(' ')}" (${chunk.startTime.toFixed(2)}s-${chunk.endTime.toFixed(2)}s)`)
   })
   
-  const sortedTimePoints = Array.from(timePoints).sort((a, b) => a - b)
-  
-  // Create subtitle segments for each time interval
-  for (let i = 0; i < sortedTimePoints.length - 1; i++) {
-    const intervalStart = sortedTimePoints[i]
-    const intervalEnd = sortedTimePoints[i + 1]
-    const intervalMid = (intervalStart + intervalEnd) / 2
+  // Generate subtitles using phrase chunks for smoother live-caption experience
+  phraseChunks.forEach(chunk => {
+    // Each chunk gets multiple subtitle segments for karaoke effect
+    const chunkStart = Math.max(0, chunk.startTime - showWindow)
+    const chunkEnd = chunk.endTime + showWindow
     
-    // Find words that should be visible at this interval's midpoint
-    const visibleWords: Array<{
-      word: string
-      isActive: boolean
-      participantIndex: number
-    }> = []
+    // Create time intervals within the chunk for karaoke effect
+    const chunkTimePoints = new Set<number>()
+    chunkTimePoints.add(chunkStart)
+    chunkTimePoints.add(chunkEnd)
     
-    allWords.forEach(word => {
-      // Word is visible if midpoint is within show window
-      if (
-        intervalMid >= word.start - showWindow &&
-        intervalMid <= word.end + showWindow
-      ) {
-        const isActive = intervalMid >= word.start && intervalMid <= word.end
-        visibleWords.push({
-          word: word.word,
-          isActive,
-          participantIndex: word.participantIndex
-        })
-      }
+    // Add word boundaries for karaoke highlighting
+    chunk.words.forEach(word => {
+      chunkTimePoints.add(word.start)
+      chunkTimePoints.add(word.end)
     })
     
-    // Only create subtitle if there are visible words
-    if (visibleWords.length > 0) {
+    const sortedChunkTimes = Array.from(chunkTimePoints).sort((a, b) => a - b)
+    
+    // Create subtitle intervals within this chunk
+    for (let i = 0; i < sortedChunkTimes.length - 1; i++) {
+      const intervalStart = sortedChunkTimes[i]
+      const intervalEnd = sortedChunkTimes[i + 1]
+      const intervalMid = (intervalStart + intervalEnd) / 2
+      
+      // Skip intervals outside the chunk visibility window
+      if (intervalMid < chunkStart || intervalMid > chunkEnd) continue
+      
       const startTime = formatSRTTime(intervalStart)
       const endTime = formatSRTTime(intervalEnd)
       
-      // Sort words by start time to maintain order
-      const sortedWords = allWords
-        .filter(word => 
-          intervalMid >= word.start - showWindow &&
-          intervalMid <= word.end + showWindow
-        )
-        .sort((a, b) => a.start - b.start)
+      // Determine participant color
+      const color = chunk.participantIndex === 1 ? '#3b82f6' : '#f59e0b' // Blue or Orange
       
-      // Create subtitle text with different styles for active/inactive words
+      // Build karaoke-style subtitle text
       let subtitleText = ''
       
-      sortedWords.forEach(word => {
+      chunk.words.forEach(word => {
         const isActive = intervalMid >= word.start && intervalMid <= word.end
-        const color = word.participantIndex === 1 
-          ? (isActive ? '#3b82f6' : '#60a5fa')  // Blue tones for participant 1
-          : (isActive ? '#f59e0b' : '#fbbf24')  // Orange tones for participant 2
-        
         const style = isActive ? `<b>${word.word}</b>` : word.word
         subtitleText += `<font color="${color}">${style}</font> `
       })
@@ -165,7 +183,7 @@ export async function generateSubtitleFile(
         subtitleIndex++
       }
     }
-  }
+  })
   
   fs.writeFileSync(subtitlePath, srtContent, 'utf8')
   return subtitlePath
