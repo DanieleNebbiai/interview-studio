@@ -227,12 +227,6 @@ export function buildFFmpegCommand(data: {
         `[v0][v1]hstack[base_video]`
       )
       
-      // Create full-screen versions for focus overlays
-      filterComplex.push(
-        `[0:v]trim=${section.startTime.toFixed(2)}:${section.endTime.toFixed(2)},scale=1280:720,setsar=1/1[full0]`,
-        `[1:v]trim=${section.startTime.toFixed(2)}:${section.endTime.toFixed(2)},scale=1280:720,setsar=1/1[full1]`
-      )
-      
       let currentVideoStream = '[base_video]'
       
       // Apply focus overlays based on focus segments
@@ -240,13 +234,19 @@ export function buildFFmpegCommand(data: {
         if (fs.focusedParticipantId && recordingVideoMap[fs.focusedParticipantId] !== undefined) {
           const videoIndex = recordingVideoMap[fs.focusedParticipantId]
           const overlayName = `overlay${index}`
+          const fullStreamName = `full${videoIndex}_${index}`
           
           console.log(`🎯 Adding focus overlay ${index}: participant ${fs.focusedParticipantId} (video ${videoIndex}) from ${fs.startTime.toFixed(2)}s to ${fs.endTime.toFixed(2)}s`)
+          
+          // Create individual full-screen stream for this overlay to avoid reuse
+          filterComplex.push(
+            `[${videoIndex}:v]trim=${section.startTime.toFixed(2)}:${section.endTime.toFixed(2)},scale=1280:720,setsar=1/1[${fullStreamName}]`
+          )
           
           // Create overlay filter with enable expression for time range
           const enableExpr = `'between(t,${fs.startTime.toFixed(2)},${fs.endTime.toFixed(2)})'`
           filterComplex.push(
-            `${currentVideoStream}[full${videoIndex}]overlay=enable=${enableExpr}[${overlayName}]`
+            `${currentVideoStream}[${fullStreamName}]overlay=enable=${enableExpr}[${overlayName}]`
           )
           
           currentVideoStream = `[${overlayName}]`
