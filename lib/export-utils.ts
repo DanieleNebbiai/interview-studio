@@ -219,11 +219,11 @@ export function buildFFmpegCommand(data: {
     console.log(`🎯 Focus segments:`, focusSegments)
     
     if (inputVideos.length === 2) {
-      // Create base 50/50 layout
-      console.log(`📱 Creating base 50/50 grid with focus overlays`)
+      // Create base 50/50 layout with center crop to maintain aspect ratio
+      console.log(`📱 Creating base 50/50 grid with center crop to avoid squishing`)
       filterComplex.push(
-        `[0:v]trim=${section.startTime.toFixed(2)}:${section.endTime.toFixed(2)},scale=640:720,setsar=1/1[v0]`,
-        `[1:v]trim=${section.startTime.toFixed(2)}:${section.endTime.toFixed(2)},scale=640:720,setsar=1/1[v1]`,
+        `[0:v]trim=${section.startTime.toFixed(2)}:${section.endTime.toFixed(2)},crop=720:720:280:0,scale=640:720,setsar=1/1[v0]`,
+        `[1:v]trim=${section.startTime.toFixed(2)}:${section.endTime.toFixed(2)},crop=720:720:280:0,scale=640:720,setsar=1/1[v1]`,
         `[v0][v1]hstack[base_video]`
       )
       
