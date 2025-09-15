@@ -767,43 +767,43 @@ async function simpleSequentialConcat(
   chunks: Array<{ startTime: number; endTime: number; playbackSpeed: number; originalSectionId: string }>, 
   outputPath: string
 ): Promise<void> {
-  console.log('🔗 Ultra-simple sequential concatenation (Railway-safe)')
+  console.log('🔗 Ultra-simple sequential concatenation (Railway-safe)');
 
   // Step 1: Apply speed to each chunk individually (one at a time)
-  const speedAdjustedChunks: string[] = []
+  const speedAdjustedChunks: string[] = [];
 
   for (let i = 0; i < chunkFiles.length; i++) {
-    const chunk = chunks[i]
-    const inputFile = chunkFiles[i]
-    const outputFile = outputPath.replace('.mp4', `_speed_${i}.mp4`)
+    const chunk = chunks[i];
+    const inputFile = chunkFiles[i];
+    const outputFile = outputPath.replace('.mp4', `_speed_${i}.mp4`);
 
-    console.log(`🎯 Applying ${chunk.playbackSpeed}x speed to chunk ${i + 1}/${chunkFiles.length}`)
+    console.log(`🎯 Applying ${chunk.playbackSpeed}x speed to chunk ${i + 1}/${chunkFiles.length}`);
 
-    await applySpeedToChunk(inputFile, outputFile, chunk.playbackSpeed)
-    speedAdjustedChunks.push(outputFile)
+    await applySpeedToChunk(inputFile, outputFile, chunk.playbackSpeed);
+    speedAdjustedChunks.push(outputFile);
 
     // Force garbage collection after each speed adjustment
     if (global.gc) {
-      global.gc()
-      console.log('♻️ GC after speed adjustment')
+      global.gc();
+      console.log('♻️ GC after speed adjustment');
     }
 
     // Small pause between operations
-    await new Promise(resolve => setTimeout(resolve, 1000))
+    await new Promise(resolve => setTimeout(resolve, 1000));
   }
 
-  // Step 2: Simple file-based concatenation (no filters)
-  console.log('🔗 Simple file-based concatenation of speed-adjusted chunks')
-  await simpleFileConcatenation(speedAdjustedChunks, outputPath)
+  // Step 2: Concatenate using the concat FILTER, which is safer for timestamps
+  console.log('🔗 Concatenating speed-adjusted chunks using the concat filter...');
+  await filterBasedConcatenation(speedAdjustedChunks, outputPath);
 
   // Cleanup speed-adjusted chunks
-  await cleanupFiles(speedAdjustedChunks, 'speed-adjusted chunk')
+  await cleanupFiles(speedAdjustedChunks, 'speed-adjusted chunk');
 }
 
 // Apply speed adjustment to a single chunk
 async function applySpeedToChunk(inputPath: string, outputPath: string, speed: number): Promise<void> {
   return new Promise((resolve, reject) => {
-    const command = ffmpeg()
+    const command = ffmpeg();
 
     // Ultra memory-efficient settings
     command
@@ -816,7 +816,7 @@ async function applySpeedToChunk(inputPath: string, outputPath: string, speed: n
       // Apply speed adjustment with basic filters (no complex filter)
       command
         .videoFilters(`setpts=PTS/${speed}`)
-        .audioFilters(`atempo=${speed}`)
+        .audioFilters(`atempo=${speed}`);
     }
 
     command
@@ -827,80 +827,63 @@ async function applySpeedToChunk(inputPath: string, outputPath: string, speed: n
       .addOption('-crf', '30')            // Low quality to save memory
       .videoBitrate('100k')               // Very low bitrate
       .audioBitrate('32k')                // Very low audio bitrate
-      .output(outputPath)
+      .output(outputPath);
 
     command
       .on('start', () => {
-        console.log(`🎬 Speed adjustment ${speed}x started`)
+        console.log(`🎬 Speed adjustment ${speed}x started`);
       })
       .on('end', () => {
-        console.log(`✅ Speed adjustment ${speed}x completed`)
-        resolve()
+        console.log(`✅ Speed adjustment ${speed}x completed`);
+        resolve();
       })
       .on('error', (err) => {
-        console.error(`❌ Speed adjustment failed:`, err)
-        reject(err)
+        console.error(`❌ Speed adjustment failed:`, err);
+        reject(err);
       })
-      .run()
-  })
+      .run();
+  });
 }
 
-// Simple file-based concatenation without complex filters
-async function simpleFileConcatenation(chunkFiles: string[], outputPath: string): Promise<void> {
+// Simple file-based concatenation using the concat FILTER (safer for varied timestamps)
+async function filterBasedConcatenation(chunkFiles: string[], outputPath: string): Promise<void> {
   return new Promise((resolve, reject) => {
-    const concatListPath = outputPath.replace('.mp4', '_concat.txt')
-    const concatContent = chunkFiles.map(file => `file '${file}'`).join('\n')
+    console.log(`🔗 Concatenating ${chunkFiles.length} chunks using concat FILTER`);
+    const command = ffmpeg();
 
-    try {
-      fs.writeFileSync(concatListPath, concatContent, 'utf8')
-    } catch (error) {
-      reject(new Error(`Failed to create concat list: ${error}`))
-      return
-    }
+    // Add each speed-adjusted chunk as a separate input
+    chunkFiles.forEach(file => {
+      command.addInput(file);
+    });
 
-    const command = ffmpeg()
+    // Build the filter graph
+    const inputs = chunkFiles.map((_, index) => `[${index}:v][${index}:a]`).join('');
+    const filter = `${inputs}concat=n=${chunkFiles.length}:v=1:a=1[outv][outa]`;
 
     command
-      .input(concatListPath)
-      .inputOptions(['-f', 'concat', '-safe', '0'])
+      .complexFilter(filter)
+      .map('[outv]')
+      .map('[outa]')
       .addOption('-threads', '1')
-      .addOption('-bufsize', '64k')
-      .format('mp4')
-      .videoCodec('libx264')              // Re-encode to fix timestamps
-      .audioCodec('aac')                  // Re-encode audio
-      .addOption('-preset', 'ultrafast')    // Ensure it's fast
-      .output(outputPath)
+      .addOption('-preset', 'ultrafast')
+      .videoCodec('libx264') // Re-encoding is necessary with concat filter
+      .audioCodec('aac')
+      .output(outputPath);
 
     command
-      .on('start', () => {
-        console.log('🎬 Simple concatenation started')
+      .on('start', (cmd) => {
+        console.log('🎬 Concat filter started:', cmd);
       })
       .on('end', () => {
-        console.log('✅ Simple concatenation completed')
-        // Cleanup concat list
-        try {
-          if (fs.existsSync(concatListPath)) {
-            fs.unlinkSync(concatListPath)
-          }
-        } catch (error) {
-          console.warn('⚠️ Failed to cleanup concat list:', error)
-        }
-        resolve()
+        console.log('✅ Concat filter completed');
+        resolve();
       })
       .on('error', (err) => {
-        console.error('❌ Simple concatenation failed:', err)
-        // Cleanup on error
-        try {
-          if (fs.existsSync(concatListPath)) {
-            fs.unlinkSync(concatListPath)
-          }
-        } catch (cleanupError) {
-          console.warn('⚠️ Failed to cleanup on error:', cleanupError)
-        }
-        reject(err)
+        console.error('❌ Concat filter failed:', err);
+        reject(err);
       })
-      .run()
-  })
+      .run();
+  });
 }
 
 // Memory-efficient concatenation with speed adjustment applied during concat phase
