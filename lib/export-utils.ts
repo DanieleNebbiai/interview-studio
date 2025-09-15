@@ -930,7 +930,6 @@ async function applySpeedToChunk(inputPath: string, outputPath: string, speed: n
       .addOption('-bsf:v', 'h264_mp4toannexb') // <-- Added bitstream filter for TS compatibility
       .addOption('-preset', 'medium')     // Better quality than ultrafast
       .addOption('-crf', '23')            // Higher quality (lower CRF)
-      .videoBitrate('2M')                 // Much higher bitrate
       .audioBitrate('128k')               // Better audio quality
       .output(outputPath)
 
