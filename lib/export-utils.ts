@@ -285,6 +285,9 @@ export async function buildFFmpegCommandMemorySafe(data: {
 
       chunkFiles.push(chunkOutputPath)
 
+      // *** DEBUG LOG - Raw chunk duration ***
+      await logVideoProperties(chunkOutputPath, `Raw chunk ${chunkIndex + 1} (before speed adjustment)`)
+
       // Log chunk info and memory usage
       const stats = fs.statSync(chunkOutputPath)
       const memUsage = process.memoryUsage()
