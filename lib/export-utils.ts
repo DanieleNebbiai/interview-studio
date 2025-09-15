@@ -675,8 +675,13 @@ async function processChunkMemorySafe(params: {
 
       // Apply focus overlays for this chunk (simplified to reduce memory)
       const chunkFocusSegments = focusSegments.filter(fs =>
-        fs.startTime >= chunk.startTime && fs.endTime <= chunk.endTime
+        fs.startTime < chunk.endTime && fs.endTime > chunk.startTime // Intersects with chunk
       )
+
+      console.log(`🎯 Chunk ${chunkIndex}: Found ${chunkFocusSegments.length} focus segments`)
+      if (chunkFocusSegments.length > 0) {
+        console.log(`🎯 Focus segments:`, chunkFocusSegments.map(fs => `${fs.startTime}-${fs.endTime} (participant: ${fs.focusedParticipantId})`))
+      }
 
       // Limit to max 1 focus overlay per chunk to save memory
       if (chunkFocusSegments.length > 0) {
@@ -767,36 +772,30 @@ async function processChunkMemorySafe(params: {
 // Memory-efficient concatenation using file-based approach
 async function concatenateChunksMemorySafe(chunkFiles: string[], outputPath: string): Promise<void> {
   return new Promise((resolve, reject) => {
-    console.log(`🔗 Memory-safe concatenation of ${chunkFiles.length} chunks`)
-
-    const concatListPath = outputPath.replace('.mp4', '_concat.txt')
-    const concatContent = chunkFiles.map(file => `file '${file}'`).join('\n')
-
-    try {
-      fs.writeFileSync(concatListPath, concatContent, 'utf8')
-      console.log(`📝 Created concat list: ${concatListPath}`)
-    } catch (error) {
-      reject(new Error(`Failed to create concat list: ${error}`))
-      return
-    }
+    console.log(`🔗 Memory-safe filter-based concatenation of ${chunkFiles.length} chunks`)
 
     const command = ffmpeg()
 
     // Memory-efficient settings
     command
       .addOption('-threads', '1')           // Single thread for concatenation
-      .addOption('-avoid_negative_ts', 'make_zero')
 
-    // Use concat demuxer (most memory-efficient)
-    command
-      .input(concatListPath)
-      .inputOptions(['-f', 'concat', '-safe', '0'])
+    // Add each chunk as separate input for filter-based concatenation
+    chunkFiles.forEach(file => {
+      command.addInput(file)
+    })
 
-    // Re-encode to ensure speed adjustments are preserved
-    // Use fast settings to minimize processing time
+    // Use filter-based concatenation to preserve timing
+    const inputs = chunkFiles.map((_, index) => `[${index}:v][${index}:a]`).join('')
+    const concatFilter = `${inputs}concat=n=${chunkFiles.length}:v=1:a=1[outv][outa]`
+
+    command.complexFilter([concatFilter])
+    command.map('[outv]').map('[outa]')
+
+    // Re-encode to ensure proper timing
     command
       .format('mp4')
-      .videoCodec('libx264')                // Re-encode to preserve speed adjustments
+      .videoCodec('libx264')                // Re-encode to preserve timing
       .audioCodec('aac')                    // Re-encode audio for consistency
       .addOption('-preset', 'ultrafast')    // Fast encoding
       .addOption('-crf', '18')              // Good quality
@@ -812,32 +811,11 @@ async function concatenateChunksMemorySafe(chunkFiles: string[], outputPath: str
         }
       })
       .on('end', () => {
-        console.log('✅ Memory-safe concatenation completed')
-
-        // Cleanup concat list
-        try {
-          if (fs.existsSync(concatListPath)) {
-            fs.unlinkSync(concatListPath)
-            console.log(`🧹 Cleaned up concat list`)
-          }
-        } catch (error) {
-          console.warn(`⚠️ Failed to cleanup concat list: ${error}`)
-        }
-
+        console.log('✅ Memory-safe filter-based concatenation completed')
         resolve()
       })
       .on('error', (err) => {
         console.error('❌ Memory-safe concatenation failed:', err)
-
-        // Cleanup on error
-        try {
-          if (fs.existsSync(concatListPath)) {
-            fs.unlinkSync(concatListPath)
-          }
-        } catch (cleanupError) {
-          console.warn(`⚠️ Failed to cleanup on error: ${cleanupError}`)
-        }
-
         reject(err)
       })
       .run()
