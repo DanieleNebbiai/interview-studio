@@ -258,17 +258,14 @@ export async function buildFFmpegCommandMemorySafe(data: {
   console.log('🔍 Recordings data for sync:', recordings.map(r => ({
     id: r.id,
     participant_id: r.participant_id,
-    recording_started_at: (r as any).recording_started_at || 'MISSING'
+    recording_started_at: r.recording_started_at || 'MISSING'
   })))
 
-  // Type-safe access to recording_started_at (might be undefined in type but exists at runtime)
-  const recordingsWithTimestamps = recordings as Array<typeof recordings[0] & { recording_started_at?: string }>
-
-  if (recordings.length > 1 && recordingsWithTimestamps.every(r => r.recording_started_at)) {
+  if (recordings.length > 1 && recordings.every(r => r.recording_started_at)) {
     // Find the earliest recording_started_at timestamp
-    const earliestStart = Math.min(...recordingsWithTimestamps.map(r => new Date(r.recording_started_at!).getTime()))
+    const earliestStart = Math.min(...recordings.map(r => new Date(r.recording_started_at!).getTime()))
 
-    recordingsWithTimestamps.forEach((recording, index) => {
+    recordings.forEach((recording, index) => {
       const recordingStart = new Date(recording.recording_started_at!).getTime()
       const offsetMs = recordingStart - earliestStart
       const offsetSeconds = offsetMs / 1000

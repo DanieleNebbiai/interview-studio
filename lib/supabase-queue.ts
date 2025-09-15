@@ -17,6 +17,7 @@ export interface ExportJobData {
     recording_url: string
     duration: number
     participant_id: string
+    recording_started_at?: string
   }>
   videoSections: Array<{
     id: string

@@ -124,7 +124,8 @@ export async function POST(request: NextRequest) {
         id: r.id,
         recording_url: r.recording_url,
         duration: r.duration || 0,
-        participant_id: r.participant_session_id || 'unknown'
+        participant_id: r.participant_session_id || 'unknown',
+        recording_started_at: r.recording_started_at
       })),
       videoSections,
       focusSegments: (focusSegments || []).map(fs => ({
