@@ -81,13 +81,24 @@
 
 ---
 
-### 🔄 ATTEMPT 7: File-Based Concat with Re-Encoding (CURRENT)
+### ❌ ATTEMPT 7: File-Based Concat with Re-Encoding (PARTIAL)
 **Method**:
 - Back to file-based concat demuxer (to save memory)
 - BUT force re-encoding instead of copy (to preserve speed)
 - Ultra-low bitrates and buffer sizes to minimize memory
 - Settings: CRF 28, 200k video bitrate, 64k audio bitrate
-**Goal**: Combine memory efficiency of file-based with duration accuracy of re-encoding
+**Result**: ✅ SIGKILL resolved, ❌ Still 57 seconds duration
+**Issue**: Speed adjustments in chunks get lost during file-based concatenation
+
+---
+
+### 🔄 ATTEMPT 8: Speed-During-Concatenation (CURRENT)
+**Method**:
+- Process chunks WITHOUT speed adjustments (just raw segments)
+- Apply speed adjustments DURING concatenation phase
+- Use complex filter to apply setpts/atempo during concat
+- Memory-efficient: single thread, small buffers
+**Logic**: Speed adjustment should happen in concatenation, not in chunks
 **Status**: Testing in progress
 
 ---

@@ -281,9 +281,9 @@ export async function buildFFmpegCommandMemorySafe(data: {
       }
     }
 
-    console.log('🔄 Phase 2: Sequential concatenation of chunks')
+    console.log('🔄 Phase 2: Sequential concatenation of chunks with speed adjustment')
     const tempConcatenated = outputPath.replace('.mp4', '_temp_concat.mp4')
-    await concatenateChunksMemorySafe(chunkFiles, tempConcatenated)
+    await concatenateChunksWithSpeed(chunkFiles, chunks, tempConcatenated)
 
     // Immediate cleanup of chunk files
     await cleanupFiles(chunkFiles, 'chunk')
@@ -659,15 +659,12 @@ async function processChunkMemorySafe(params: {
 
     if (inputVideos.length === 2) {
       // Memory-efficient 50/50 layout for this chunk
-      // Calculate expected chunk duration after speed adjustment
-      const expectedChunkDuration = chunkDuration / chunk.playbackSpeed
-      const speedFilter = chunk.playbackSpeed !== 1 ? `,setpts=PTS/${chunk.playbackSpeed}` : ''
-
-      console.log(`📱 Processing chunk: ${chunkDuration.toFixed(1)}s at ${chunk.playbackSpeed}x speed → ${expectedChunkDuration.toFixed(1)}s output`)
+      // DON'T apply speed here - just process the raw segment
+      console.log(`📱 Processing chunk: ${chunkDuration.toFixed(1)}s (speed will be applied during concatenation)`)
 
       filterComplex.push(
-        `[0:v]trim=${chunk.startTime.toFixed(2)}:${chunk.endTime.toFixed(2)},crop=720:720:280:0,scale=640:720,setsar=1/1${speedFilter}[v0_c${chunkIndex}]`,
-        `[1:v]trim=${chunk.startTime.toFixed(2)}:${chunk.endTime.toFixed(2)},crop=720:720:280:0,scale=640:720,setsar=1/1${speedFilter}[v1_c${chunkIndex}]`,
+        `[0:v]trim=${chunk.startTime.toFixed(2)}:${chunk.endTime.toFixed(2)},crop=720:720:280:0,scale=640:720,setsar=1/1[v0_c${chunkIndex}]`,
+        `[1:v]trim=${chunk.startTime.toFixed(2)}:${chunk.endTime.toFixed(2)},crop=720:720:280:0,scale=640:720,setsar=1/1[v1_c${chunkIndex}]`,
         `[v0_c${chunkIndex}][v1_c${chunkIndex}]hstack[base_video_c${chunkIndex}]`
       )
 
@@ -692,11 +689,11 @@ async function processChunkMemorySafe(params: {
           const fullStreamName = `full${videoIndex}_c${chunkIndex}`
 
           filterComplex.push(
-            `[${videoIndex}:v]trim=${chunk.startTime.toFixed(2)}:${chunk.endTime.toFixed(2)},scale=1280:720,setsar=1/1${speedFilter}[${fullStreamName}]`
+            `[${videoIndex}:v]trim=${chunk.startTime.toFixed(2)}:${chunk.endTime.toFixed(2)},scale=1280:720,setsar=1/1[${fullStreamName}]`
           )
 
-          const relativeStart = Math.max(0, fs.startTime - chunk.startTime) / chunk.playbackSpeed
-          const relativeEnd = Math.min(chunk.endTime - chunk.startTime, fs.endTime - chunk.startTime) / chunk.playbackSpeed
+          const relativeStart = Math.max(0, fs.startTime - chunk.startTime)
+          const relativeEnd = Math.min(chunk.endTime - chunk.startTime, fs.endTime - chunk.startTime)
 
           const enableExpr = `'between(t,${relativeStart.toFixed(2)},${relativeEnd.toFixed(2)})'`
           filterComplex.push(
@@ -709,25 +706,20 @@ async function processChunkMemorySafe(params: {
 
       filterComplex.push(`${currentVideoStream}null[finalvideo]`)
 
-      // Audio with memory-efficient processing
-      const audioSpeedFilter = chunk.playbackSpeed !== 1 ? `,atempo=${chunk.playbackSpeed}` : ''
+      // Audio without speed adjustment (will be applied during concatenation)
       filterComplex.push(
-        `[0:a]atrim=${chunk.startTime.toFixed(2)}:${chunk.endTime.toFixed(2)}${audioSpeedFilter}[a0_c${chunkIndex}]`,
-        `[1:a]atrim=${chunk.startTime.toFixed(2)}:${chunk.endTime.toFixed(2)}${audioSpeedFilter}[a1_c${chunkIndex}]`,
+        `[0:a]atrim=${chunk.startTime.toFixed(2)}:${chunk.endTime.toFixed(2)}[a0_c${chunkIndex}]`,
+        `[1:a]atrim=${chunk.startTime.toFixed(2)}:${chunk.endTime.toFixed(2)}[a1_c${chunkIndex}]`,
         `[a0_c${chunkIndex}][a1_c${chunkIndex}]amix=inputs=2[finalaudio]`
       )
 
     } else {
       // Single video processing (memory-efficient)
-      const expectedChunkDuration = chunkDuration / chunk.playbackSpeed
-      const speedFilter = chunk.playbackSpeed !== 1 ? `,setpts=PTS/${chunk.playbackSpeed}` : ''
-      const audioSpeedFilter = chunk.playbackSpeed !== 1 ? `,atempo=${chunk.playbackSpeed}` : ''
-
-      console.log(`📱 Single video chunk: ${chunkDuration.toFixed(1)}s at ${chunk.playbackSpeed}x speed → ${expectedChunkDuration.toFixed(1)}s output`)
+      console.log(`📱 Single video chunk: ${chunkDuration.toFixed(1)}s (speed will be applied during concatenation)`)
 
       filterComplex.push(
-        `[0:v]trim=${chunk.startTime.toFixed(2)}:${chunk.endTime.toFixed(2)},scale=1280:720,setsar=1/1${speedFilter}[finalvideo]`,
-        `[0:a]atrim=${chunk.startTime.toFixed(2)}:${chunk.endTime.toFixed(2)}${audioSpeedFilter}[finalaudio]`
+        `[0:v]trim=${chunk.startTime.toFixed(2)}:${chunk.endTime.toFixed(2)},scale=1280:720,setsar=1/1[finalvideo]`,
+        `[0:a]atrim=${chunk.startTime.toFixed(2)}:${chunk.endTime.toFixed(2)}[finalaudio]`
       )
     }
 
@@ -763,6 +755,91 @@ async function processChunkMemorySafe(params: {
       })
       .on('error', (err) => {
         console.error(`❌ Chunk ${chunkIndex} processing failed:`, err)
+        reject(err)
+      })
+      .run()
+  })
+}
+
+// Memory-efficient concatenation with speed adjustment applied during concat phase
+async function concatenateChunksWithSpeed(
+  chunkFiles: string[],
+  chunks: Array<{ startTime: number; endTime: number; playbackSpeed: number; originalSectionId: string }>,
+  outputPath: string
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    console.log(`🔗 Speed-adjusted concatenation of ${chunkFiles.length} chunks`)
+
+    const command = ffmpeg()
+
+    // Ultra memory-efficient settings
+    command
+      .addOption('-threads', '1')
+      .addOption('-bufsize', '128k')
+
+    // Add each chunk as input
+    chunkFiles.forEach(file => {
+      command.addInput(file)
+    })
+
+    const filterComplex: string[] = []
+    const processedStreams: string[] = []
+    const processedAudioStreams: string[] = []
+
+    // Process each chunk with its speed adjustment
+    chunks.forEach((chunk, index) => {
+      const speedFilter = chunk.playbackSpeed !== 1 ? `,setpts=PTS/${chunk.playbackSpeed}` : ''
+      const audioSpeedFilter = chunk.playbackSpeed !== 1 ? `,atempo=${chunk.playbackSpeed}` : ''
+
+      console.log(`🎯 Chunk ${index}: Applying ${chunk.playbackSpeed}x speed during concat`)
+
+      // Apply speed to video and audio streams
+      filterComplex.push(
+        `[${index}:v]${speedFilter.slice(1) || 'null'}[v${index}_speed]`,
+        `[${index}:a]${audioSpeedFilter.slice(1) || 'anull'}[a${index}_speed]`
+      )
+
+      processedStreams.push(`[v${index}_speed]`)
+      processedAudioStreams.push(`[a${index}_speed]`)
+    })
+
+    // Concatenate all speed-adjusted streams
+    const videoInputs = processedStreams.join('')
+    const audioInputs = processedAudioStreams.join('')
+    filterComplex.push(
+      `${videoInputs}concat=n=${chunks.length}:v=1:a=0[finalvideo]`,
+      `${audioInputs}concat=n=${chunks.length}:v=0:a=1[finalaudio]`
+    )
+
+    command.complexFilter(filterComplex)
+    command.map('[finalvideo]').map('[finalaudio]')
+
+    // Memory-efficient output settings
+    command
+      .format('mp4')
+      .videoCodec('libx264')
+      .audioCodec('aac')
+      .addOption('-preset', 'ultrafast')
+      .addOption('-crf', '28')
+      .videoBitrate('200k')
+      .audioBitrate('64k')
+      .output(outputPath)
+
+    command
+      .on('start', () => {
+        console.log('🎬 Speed-adjusted concatenation started')
+      })
+      .on('progress', (progress) => {
+        if (progress.percent) {
+          console.log(`🎯 Speed concat progress: ${progress.percent.toFixed(1)}%`)
+        }
+      })
+      .on('end', () => {
+        console.log('✅ Speed-adjusted concatenation completed')
+        resolve()
+      })
+      .on('error', (err) => {
+        console.error('❌ Speed-adjusted concatenation failed:', err)
         reject(err)
       })
       .run()
