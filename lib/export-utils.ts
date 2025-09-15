@@ -715,39 +715,41 @@ async function processChunkMemorySafe(params: {
 
       let currentVideoStream = `[base_video_c${chunkIndex}]`
 
-      // Apply focus overlays for this chunk (simplified to reduce memory)
-      const chunkFocusSegments = focusSegments.filter(fs => 
+      // TEMPORARILY DISABLED: Focus overlays to isolate trim duration issue
+      console.log(`🚫 Focus overlays temporarily disabled for memory testing`)
+
+      const chunkFocusSegments = focusSegments.filter(fs =>
         fs.startTime < chunk.endTime && fs.endTime > chunk.startTime // Intersects with chunk
       )
 
-      console.log(`🎯 Chunk ${chunkIndex}: Found ${chunkFocusSegments.length} focus segments`)
+      console.log(`🎯 Chunk ${chunkIndex}: Found ${chunkFocusSegments.length} focus segments (DISABLED)`)
       if (chunkFocusSegments.length > 0) {
         console.log(`🎯 Focus segments:`, chunkFocusSegments.map(fs => `${fs.startTime}-${fs.endTime} (participant: ${fs.focusedParticipantId})`))
       }
 
-      // Limit to max 1 focus overlay per chunk to save memory
-      if (chunkFocusSegments.length > 0) {
-        const fs = chunkFocusSegments[0] // Use only the first one
-        if (fs.focusedParticipantId && recordingVideoMap[fs.focusedParticipantId] !== undefined) {
-          const videoIndex = recordingVideoMap[fs.focusedParticipantId]
-          const overlayName = `overlay_c${chunkIndex}`
-          const fullStreamName = `full${videoIndex}_c${chunkIndex}`
-
-          filterComplex.push(
-            `[${videoIndex}:v]trim=start=${chunk.startTime.toFixed(2)}:duration=${chunkDuration.toFixed(2)},scale=1280:720,setsar=1/1[${fullStreamName}]`
-          )
-
-          const relativeStart = Math.max(0, fs.startTime - chunk.startTime)
-          const relativeEnd = Math.min(chunk.endTime - chunk.startTime, fs.endTime - chunk.startTime)
-
-          const enableExpr = `'between(t,${relativeStart.toFixed(2)},${relativeEnd.toFixed(2)})'`
-          filterComplex.push(
-            `${currentVideoStream}[${fullStreamName}]overlay=enable=${enableExpr}[${overlayName}]`
-          )
-
-          currentVideoStream = `[${overlayName}]`
-        }
-      }
+      // FOCUS OVERLAYS DISABLED - all focus processing commented out
+      // if (chunkFocusSegments.length > 0) {
+      //   const fs = chunkFocusSegments[0] // Use only the first one
+      //   if (fs.focusedParticipantId && recordingVideoMap[fs.focusedParticipantId] !== undefined) {
+      //     const videoIndex = recordingVideoMap[fs.focusedParticipantId]
+      //     const overlayName = `overlay_c${chunkIndex}`
+      //     const fullStreamName = `full${videoIndex}_c${chunkIndex}`
+      //
+      //     filterComplex.push(
+      //       `[${videoIndex}:v]trim=start=${chunk.startTime.toFixed(2)}:duration=${chunkDuration.toFixed(2)},scale=1280:720,setsar=1/1[${fullStreamName}]`
+      //     )
+      //
+      //     const relativeStart = Math.max(0, fs.startTime - chunk.startTime)
+      //     const relativeEnd = Math.min(chunk.endTime - chunk.startTime, fs.endTime - chunk.startTime)
+      //
+      //     const enableExpr = `'between(t,${relativeStart.toFixed(2)},${relativeEnd.toFixed(2)})'`
+      //     filterComplex.push(
+      //       `${currentVideoStream}[${fullStreamName}]overlay=enable=${enableExpr}[${overlayName}]`
+      //     )
+      //
+      //     currentVideoStream = `[${overlayName}]`
+      //   }
+      // }
 
       filterComplex.push(`${currentVideoStream}null[finalvideo]`)
       // Audio is already processed above as [audio_c${chunkIndex}]
