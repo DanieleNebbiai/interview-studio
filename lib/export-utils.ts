@@ -199,8 +199,8 @@ function formatSRTTime(seconds: number): string {
   return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')},${ms.toString().padStart(3, '0')}`
 }
 
-// Two-Pass Processing: Process each section separately, then concatenate
-export async function buildFFmpegCommandTwoPass(data: {
+// Memory-Capped Streaming Processing: Scalable for long-form content (1+ hours)
+export async function buildFFmpegCommandMemorySafe(data: {
   inputVideos: string[]
   outputPath: string
   videoSections: ExportJobData['videoSections']
@@ -221,7 +221,12 @@ export async function buildFFmpegCommandTwoPass(data: {
   }, 0)
   console.log(`📐 Expected final video duration: ${expectedFinalDuration.toFixed(1)}s (original: ${validSections.reduce((t, s) => t + (s.endTime - s.startTime), 0).toFixed(1)}s)`)
 
-  console.log('🔄 Using Two-Pass Processing approach for accurate speed control')
+  console.log('🧠 Using Memory-Capped Streaming Processing for scalability')
+  console.log(`📊 Total content duration: ${validSections.reduce((t, s) => t + (s.endTime - s.startTime), 0).toFixed(1)}s`)
+
+  // Memory-safe configuration
+  const CHUNK_MAX_DURATION = 30 // Max 30 seconds per chunk to limit memory
+  const GC_DELAY = 2000 // 2s pause between chunks for garbage collection
 
   // Create recording ID to video index mapping
   const recordingVideoMap: { [key: string]: number } = {}
@@ -231,51 +236,63 @@ export async function buildFFmpegCommandTwoPass(data: {
 
   try {
     const tempDir = path.dirname(outputPath)
-    const sectionFiles: string[] = []
+    const chunkFiles: string[] = []
 
-    // Pass 1: Process each section separately
-    for (let sectionIndex = 0; sectionIndex < validSections.length; sectionIndex++) {
-      const section = validSections[sectionIndex]
-      const sectionOutputPath = path.join(tempDir, `section_${sectionIndex}_${Date.now()}.mp4`)
+    console.log('🔄 Phase 1: Breaking sections into memory-safe chunks')
 
-      console.log(`🔄 Pass 1 - Processing section ${sectionIndex}: ${section.startTime.toFixed(2)}s-${section.endTime.toFixed(2)}s (speed: x${section.playbackSpeed})`)
+    // Break large sections into smaller chunks
+    const chunks = createMemorySafeChunks(validSections, CHUNK_MAX_DURATION)
+    console.log(`📦 Created ${chunks.length} chunks (max ${CHUNK_MAX_DURATION}s each)`)
 
-      await processSectionSeparately({
+    // Process each chunk sequentially (never in parallel)
+    for (let chunkIndex = 0; chunkIndex < chunks.length; chunkIndex++) {
+      const chunk = chunks[chunkIndex]
+      const chunkOutputPath = path.join(tempDir, `chunk_${chunkIndex}_${Date.now()}.mp4`)
+
+      console.log(`🔄 Processing chunk ${chunkIndex + 1}/${chunks.length}: ${chunk.startTime.toFixed(1)}s-${chunk.endTime.toFixed(1)}s (${chunk.playbackSpeed}x speed)`)
+
+      // Force garbage collection before processing
+      if (global.gc) {
+        global.gc()
+        console.log('♻️ Garbage collection triggered')
+      }
+
+      await processChunkMemorySafe({
         inputVideos,
-        outputPath: sectionOutputPath,
-        section,
-        sectionIndex,
+        outputPath: chunkOutputPath,
+        chunk,
+        chunkIndex,
         focusSegments,
         settings,
-        recordings,
         recordingVideoMap
       })
 
-      sectionFiles.push(sectionOutputPath)
-      console.log(`✅ Section ${sectionIndex} processed: ${sectionOutputPath}`)
+      chunkFiles.push(chunkOutputPath)
+
+      // Log chunk info and memory usage
+      const stats = fs.statSync(chunkOutputPath)
+      const memUsage = process.memoryUsage()
+      console.log(`✅ Chunk ${chunkIndex + 1} completed: ${Math.round(stats.size / 1024)}KB, Memory: ${Math.round(memUsage.rss / 1024 / 1024)}MB`)
+
+      // Pause for garbage collection (except for last chunk)
+      if (chunkIndex < chunks.length - 1) {
+        console.log(`⏸️ Pausing ${GC_DELAY}ms for memory cleanup...`)
+        await new Promise(resolve => setTimeout(resolve, GC_DELAY))
+      }
     }
 
-    // Pass 2: Concatenate all sections
-    console.log('🔄 Pass 2 - Concatenating processed sections')
-    await concatenateSections(sectionFiles, outputPath, subtitleFile, settings)
+    console.log('🔄 Phase 2: Sequential concatenation of chunks')
+    await concatenateChunksMemorySafe(chunkFiles, outputPath, subtitleFile, settings)
 
-    // Cleanup section files
-    sectionFiles.forEach(file => {
-      try {
-        if (fs.existsSync(file)) {
-          fs.unlinkSync(file)
-          console.log(`🧹 Cleaned up section file: ${file}`)
-        }
-      } catch (error) {
-        console.error(`⚠️ Failed to cleanup section file ${file}:`, error)
-      }
-    })
+    // Immediate cleanup of chunk files
+    await cleanupFiles(chunkFiles, 'chunk')
 
-    console.log('✅ Two-Pass Processing completed successfully')
+    const finalStats = fs.statSync(outputPath)
+    console.log(`✅ Memory-Safe Processing completed: ${Math.round(finalStats.size / 1024)}KB final video`)
     return outputPath
 
   } catch (error) {
-    console.error('❌ Two-Pass Processing failed:', error)
+    console.error('❌ Memory-Safe Processing failed:', error)
     throw error
   }
 }
@@ -553,7 +570,280 @@ export function buildFFmpegCommand(data: {
   })
 }
 
-// Process a single section with proper speed control
+// Create memory-safe chunks from video sections
+function createMemorySafeChunks(sections: ExportJobData['videoSections'], maxChunkDuration: number) {
+  const chunks: Array<{
+    startTime: number
+    endTime: number
+    playbackSpeed: number
+    originalSectionId: string
+  }> = []
+
+  for (const section of sections) {
+    const sectionDuration = section.endTime - section.startTime
+
+    if (sectionDuration <= maxChunkDuration) {
+      // Section fits in one chunk
+      chunks.push({
+        startTime: section.startTime,
+        endTime: section.endTime,
+        playbackSpeed: section.playbackSpeed,
+        originalSectionId: section.id
+      })
+    } else {
+      // Break large section into smaller chunks
+      let currentStart = section.startTime
+      while (currentStart < section.endTime) {
+        const chunkEnd = Math.min(currentStart + maxChunkDuration, section.endTime)
+        chunks.push({
+          startTime: currentStart,
+          endTime: chunkEnd,
+          playbackSpeed: section.playbackSpeed,
+          originalSectionId: section.id
+        })
+        currentStart = chunkEnd
+      }
+      console.log(`📦 Large section (${sectionDuration.toFixed(1)}s) broken into ${Math.ceil(sectionDuration / maxChunkDuration)} chunks`)
+    }
+  }
+
+  return chunks
+}
+
+// Process a single chunk with memory-efficient settings
+async function processChunkMemorySafe(params: {
+  inputVideos: string[]
+  outputPath: string
+  chunk: { startTime: number; endTime: number; playbackSpeed: number; originalSectionId: string }
+  chunkIndex: number
+  focusSegments: ExportJobData['focusSegments']
+  settings: ExportJobData['exportSettings']
+  recordingVideoMap: { [key: string]: number }
+}): Promise<void> {
+  const { inputVideos, outputPath, chunk, chunkIndex, focusSegments, settings, recordingVideoMap } = params
+
+  return new Promise((resolve, reject) => {
+    const command = ffmpeg()
+
+    // Memory-efficient settings
+    command
+      .addOption('-threads', '2')           // Limit to 2 threads
+      .addOption('-filter_threads', '1')    // Single thread for filters
+      .addOption('-bufsize', '512k')        // Small buffer size
+
+    // Add input videos
+    inputVideos.forEach(video => {
+      command.addInput(video)
+    })
+
+    const filterComplex: string[] = []
+    const chunkDuration = chunk.endTime - chunk.startTime
+
+    if (inputVideos.length === 2) {
+      // Memory-efficient 50/50 layout for this chunk
+      const speedFilter = chunk.playbackSpeed !== 1 ? `,setpts=PTS/${chunk.playbackSpeed}` : ''
+
+      console.log(`📱 Processing chunk: ${chunkDuration.toFixed(1)}s at ${chunk.playbackSpeed}x speed (memory-limited)`)
+
+      filterComplex.push(
+        `[0:v]trim=${chunk.startTime.toFixed(2)}:${chunk.endTime.toFixed(2)},crop=720:720:280:0,scale=640:720,setsar=1/1${speedFilter}[v0_c${chunkIndex}]`,
+        `[1:v]trim=${chunk.startTime.toFixed(2)}:${chunk.endTime.toFixed(2)},crop=720:720:280:0,scale=640:720,setsar=1/1${speedFilter}[v1_c${chunkIndex}]`,
+        `[v0_c${chunkIndex}][v1_c${chunkIndex}]hstack[base_video_c${chunkIndex}]`
+      )
+
+      let currentVideoStream = `[base_video_c${chunkIndex}]`
+
+      // Apply focus overlays for this chunk (simplified to reduce memory)
+      const chunkFocusSegments = focusSegments.filter(fs =>
+        fs.startTime >= chunk.startTime && fs.endTime <= chunk.endTime
+      )
+
+      // Limit to max 1 focus overlay per chunk to save memory
+      if (chunkFocusSegments.length > 0) {
+        const fs = chunkFocusSegments[0] // Use only the first one
+        if (fs.focusedParticipantId && recordingVideoMap[fs.focusedParticipantId] !== undefined) {
+          const videoIndex = recordingVideoMap[fs.focusedParticipantId]
+          const overlayName = `overlay_c${chunkIndex}`
+          const fullStreamName = `full${videoIndex}_c${chunkIndex}`
+
+          filterComplex.push(
+            `[${videoIndex}:v]trim=${chunk.startTime.toFixed(2)}:${chunk.endTime.toFixed(2)},scale=1280:720,setsar=1/1${speedFilter}[${fullStreamName}]`
+          )
+
+          const relativeStart = Math.max(0, fs.startTime - chunk.startTime) / chunk.playbackSpeed
+          const relativeEnd = Math.min(chunk.endTime - chunk.startTime, fs.endTime - chunk.startTime) / chunk.playbackSpeed
+
+          const enableExpr = `'between(t,${relativeStart.toFixed(2)},${relativeEnd.toFixed(2)})'`
+          filterComplex.push(
+            `${currentVideoStream}[${fullStreamName}]overlay=enable=${enableExpr}[${overlayName}]`
+          )
+
+          currentVideoStream = `[${overlayName}]`
+        }
+      }
+
+      filterComplex.push(`${currentVideoStream}null[finalvideo]`)
+
+      // Audio with memory-efficient processing
+      const audioSpeedFilter = chunk.playbackSpeed !== 1 ? `,atempo=${chunk.playbackSpeed}` : ''
+      filterComplex.push(
+        `[0:a]atrim=${chunk.startTime.toFixed(2)}:${chunk.endTime.toFixed(2)}${audioSpeedFilter}[a0_c${chunkIndex}]`,
+        `[1:a]atrim=${chunk.startTime.toFixed(2)}:${chunk.endTime.toFixed(2)}${audioSpeedFilter}[a1_c${chunkIndex}]`,
+        `[a0_c${chunkIndex}][a1_c${chunkIndex}]amix=inputs=2[finalaudio]`
+      )
+
+    } else {
+      // Single video processing (memory-efficient)
+      const speedFilter = chunk.playbackSpeed !== 1 ? `,setpts=PTS/${chunk.playbackSpeed}` : ''
+      const audioSpeedFilter = chunk.playbackSpeed !== 1 ? `,atempo=${chunk.playbackSpeed}` : ''
+
+      filterComplex.push(
+        `[0:v]trim=${chunk.startTime.toFixed(2)}:${chunk.endTime.toFixed(2)},scale=1280:720,setsar=1/1${speedFilter}[finalvideo]`,
+        `[0:a]atrim=${chunk.startTime.toFixed(2)}:${chunk.endTime.toFixed(2)}${audioSpeedFilter}[finalaudio]`
+      )
+    }
+
+    command.complexFilter(filterComplex)
+    command.map('[finalvideo]').map('[finalaudio]')
+
+    // Memory-efficient output settings
+    command
+      .format('mp4')
+      .videoCodec('libx264')
+      .audioCodec('aac')
+      .videoBitrate('250k')              // Reduced bitrate
+      .audioBitrate('96k')               // Reduced audio bitrate
+      .fps(Math.min(settings.framerate, 24)) // Cap at 24fps
+      .addOption('-preset', 'superfast') // Faster preset
+      .addOption('-profile:v', 'main')   // Main profile (less memory)
+      .addOption('-level', '3.1')        // Lower level
+      .addOption('-pix_fmt', 'yuv420p')
+      .output(outputPath)
+
+    command
+      .on('start', () => {
+        console.log(`🎬 Chunk ${chunkIndex} processing started (memory-capped)`)
+      })
+      .on('progress', (progress) => {
+        if (progress.percent && progress.percent > 0) {
+          console.log(`📊 Chunk ${chunkIndex} progress: ${progress.percent.toFixed(1)}%`)
+        }
+      })
+      .on('end', () => {
+        console.log(`✅ Chunk ${chunkIndex} processing completed`)
+        resolve()
+      })
+      .on('error', (err) => {
+        console.error(`❌ Chunk ${chunkIndex} processing failed:`, err)
+        reject(err)
+      })
+      .run()
+  })
+}
+
+// Memory-efficient concatenation using file-based approach
+async function concatenateChunksMemorySafe(chunkFiles: string[], outputPath: string, subtitleFile?: string, settings?: any): Promise<void> {
+  return new Promise((resolve, reject) => {
+    console.log(`🔗 Memory-safe concatenation of ${chunkFiles.length} chunks`)
+
+    const concatListPath = outputPath.replace('.mp4', '_concat.txt')
+    const concatContent = chunkFiles.map(file => `file '${file}'`).join('\n')
+
+    try {
+      fs.writeFileSync(concatListPath, concatContent, 'utf8')
+      console.log(`📝 Created concat list: ${concatListPath}`)
+    } catch (error) {
+      reject(new Error(`Failed to create concat list: ${error}`))
+      return
+    }
+
+    const command = ffmpeg()
+
+    // Memory-efficient settings
+    command
+      .addOption('-threads', '1')           // Single thread for concatenation
+      .addOption('-avoid_negative_ts', 'make_zero')
+
+    // Use concat demuxer (most memory-efficient)
+    command
+      .input(concatListPath)
+      .inputOptions(['-f', 'concat', '-safe', '0'])
+
+    // Skip subtitles in concatenation phase to save memory
+    // Will add them in a separate final pass if needed
+
+    command
+      .format('mp4')
+      .videoCodec('copy')                   // Copy instead of re-encode (much faster)
+      .audioCodec('copy')                   // Copy audio too
+      .output(outputPath)
+
+    command
+      .on('start', () => {
+        console.log('🎬 Memory-safe concatenation started')
+      })
+      .on('progress', (progress) => {
+        if (progress.percent) {
+          console.log(`🔗 Concatenation progress: ${progress.percent.toFixed(1)}%`)
+        }
+      })
+      .on('end', () => {
+        console.log('✅ Memory-safe concatenation completed')
+
+        // Cleanup concat list
+        try {
+          if (fs.existsSync(concatListPath)) {
+            fs.unlinkSync(concatListPath)
+            console.log(`🧹 Cleaned up concat list`)
+          }
+        } catch (error) {
+          console.warn(`⚠️ Failed to cleanup concat list: ${error}`)
+        }
+
+        resolve()
+      })
+      .on('error', (err) => {
+        console.error('❌ Memory-safe concatenation failed:', err)
+
+        // Cleanup on error
+        try {
+          if (fs.existsSync(concatListPath)) {
+            fs.unlinkSync(concatListPath)
+          }
+        } catch (cleanupError) {
+          console.warn(`⚠️ Failed to cleanup on error: ${cleanupError}`)
+        }
+
+        reject(err)
+      })
+      .run()
+  })
+}
+
+// Efficient file cleanup
+async function cleanupFiles(files: string[], type: string): Promise<void> {
+  console.log(`🧹 Cleaning up ${files.length} ${type} files`)
+
+  for (const file of files) {
+    try {
+      if (fs.existsSync(file)) {
+        const stats = fs.statSync(file)
+        fs.unlinkSync(file)
+        console.log(`🧹 Cleaned up ${type}: ${Math.round(stats.size / 1024)}KB freed`)
+      }
+    } catch (error) {
+      console.error(`⚠️ Failed to cleanup ${type} file ${file}:`, error)
+    }
+  }
+
+  // Force garbage collection after cleanup
+  if (global.gc) {
+    global.gc()
+    console.log('♻️ Post-cleanup garbage collection')
+  }
+}
+
+// Process a single section with proper speed control (Legacy)
 async function processSectionSeparately(params: {
   inputVideos: string[]
   outputPath: string

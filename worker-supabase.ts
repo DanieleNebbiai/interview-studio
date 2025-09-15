@@ -7,7 +7,7 @@ import {
 import {
   downloadVideo,
   generateSubtitleFile,
-  buildFFmpegCommandTwoPass,
+  buildFFmpegCommandMemorySafe,
   uploadToS3,
   cleanupTempFiles,
 } from "./lib/export-utils";
@@ -270,8 +270,8 @@ async function processExportJob(jobId: string, jobData: ExportJobData) {
     }, 5000); // Every 5 seconds during FFmpeg
 
     try {
-      // Use Two-Pass Processing for accurate speed control
-      await buildFFmpegCommandTwoPass({
+      // Use Memory-Safe Processing for scalability (1+ hour videos)
+      await buildFFmpegCommandMemorySafe({
         inputVideos: localVideos,
         outputPath,
         videoSections,
