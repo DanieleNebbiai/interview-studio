@@ -251,15 +251,11 @@ export function buildFFmpegCommand(data: {
     validSections.forEach((section, sectionIndex) => {
       console.log(`📹 Section ${sectionIndex}: ${section.startTime.toFixed(2)}s-${section.endTime.toFixed(2)}s (speed: x${section.playbackSpeed})`)
 
-      // Speed control filters - use fps and setpts approach for better compatibility
-      const speedFilter = section.playbackSpeed !== 1
-        ? `,fps=${settings.framerate * section.playbackSpeed},setpts=PTS*${1/section.playbackSpeed}`
-        : ''
+      // Speed control filters - ALWAYS apply fps normalization for concat compatibility
+      const speedFilter = `,fps=${settings.framerate * section.playbackSpeed},setpts=PTS*${1/section.playbackSpeed}`
       const audioSpeedFilter = section.playbackSpeed !== 1 ? `,atempo=${section.playbackSpeed}` : ''
 
-      if (section.playbackSpeed !== 1) {
-        console.log(`🎬 Speed filter for section ${sectionIndex}: fps=${settings.framerate * section.playbackSpeed}, setpts=PTS*${1/section.playbackSpeed}`)
-      }
+      console.log(`🎬 Speed filter for section ${sectionIndex}: fps=${settings.framerate * section.playbackSpeed}, setpts=PTS*${1/section.playbackSpeed} (speed: ${section.playbackSpeed}x)`)
 
       if (inputVideos.length === 2) {
         // Create base 50/50 layout with center crop + speed control
