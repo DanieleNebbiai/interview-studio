@@ -19,6 +19,22 @@ const s3Client = new S3Client({
 const BUCKET_NAME = process.env.R2_BUCKET_NAME || 'interview-studio-exports'
 const TEMP_DIR = '/tmp'
 
+// Helper to log video properties using ffprobe
+async function logVideoProperties(filePath: string, description: string): Promise<void> {
+  return new Promise((resolve) => {
+    ffmpeg.ffprobe(filePath, (err, metadata) => {
+      if (err) {
+        console.error(`❌ FFprobe error for ${description} [${filePath}]:`, err.message)
+        resolve()
+        return
+      }
+      const duration = metadata.format.duration
+      console.log(`🔍 Properties for ${description} [${path.basename(filePath)}]: Duration: ${duration?.toFixed(2)}s, Size: ${metadata.format.size ? (metadata.format.size / 1024).toFixed(0) : 'N/A'} KB`)
+      resolve()
+    })
+  })
+}
+
 // Download video from URL to local file
 export async function downloadVideo(url: string, filename: string): Promise<string> {
   const localPath = path.join(TEMP_DIR, filename)
@@ -51,7 +67,7 @@ export async function generateSubtitleFile(
   let subtitleIndex = 1
   
   // Collect all words from all participants with timing
-  const allWords: Array<{
+  const allWords: Array<{ 
     word: string
     start: number
     end: number
@@ -88,7 +104,7 @@ export async function generateSubtitleFile(
   console.log(`Creating phrase chunks from ${allWords.length} words with ${gapThreshold}s gap threshold`)
   
   // Group words into phrase chunks
-  const phraseChunks: Array<{
+  const phraseChunks: Array<{ 
     words: typeof allWords
     startTime: number
     endTime: number
@@ -285,6 +301,9 @@ export async function buildFFmpegCommandMemorySafe(data: {
     const tempConcatenated = outputPath.replace('.mp4', '_temp_concat.mp4')
     await simpleSequentialConcat(chunkFiles, chunks, tempConcatenated)
 
+    // *** DEBUG LOG ***
+    await logVideoProperties(tempConcatenated, 'CONCATENATED file (before subtitles)')
+
     // Immediate cleanup of chunk files
     await cleanupFiles(chunkFiles, 'chunk')
 
@@ -307,6 +326,7 @@ export async function buildFFmpegCommandMemorySafe(data: {
 
     const finalStats = fs.statSync(outputPath)
     console.log(`✅ Memory-Safe Processing completed: ${Math.round(finalStats.size / 1024)}KB final video`)
+    await logVideoProperties(outputPath, 'FINAL video')
     return outputPath
 
   } catch (error) {
@@ -590,7 +610,7 @@ export function buildFFmpegCommand(data: {
 
 // Create memory-safe chunks from video sections
 function createMemorySafeChunks(sections: ExportJobData['videoSections'], maxChunkDuration: number) {
-  const chunks: Array<{
+  const chunks: Array<{ 
     startTime: number
     endTime: number
     playbackSpeed: number
@@ -629,7 +649,7 @@ function createMemorySafeChunks(sections: ExportJobData['videoSections'], maxChu
 }
 
 // Process a single chunk with memory-efficient settings
-async function processChunkMemorySafe(params: {
+async function processChunkMemorySafe(params: { 
   inputVideos: string[]
   outputPath: string
   chunk: { startTime: number; endTime: number; playbackSpeed: number; originalSectionId: string }
@@ -767,43 +787,43 @@ async function simpleSequentialConcat(
   chunks: Array<{ startTime: number; endTime: number; playbackSpeed: number; originalSectionId: string }>, 
   outputPath: string
 ): Promise<void> {
-  console.log('🔗 Ultra-simple sequential concatenation (Railway-safe)');
+  console.log('🔗 Ultra-simple sequential concatenation (Railway-safe)')
 
   // Step 1: Apply speed to each chunk individually (one at a time)
-  const speedAdjustedChunks: string[] = [];
+  const speedAdjustedChunks: string[] = []
 
   for (let i = 0; i < chunkFiles.length; i++) {
-    const chunk = chunks[i];
-    const inputFile = chunkFiles[i];
-    const outputFile = outputPath.replace('.mp4', `_speed_${i}.mp4`);
+    const chunk = chunks[i]
+    const inputFile = chunkFiles[i]
+    const outputFile = outputPath.replace('.mp4', `_speed_${i}.mp4`)
 
-    console.log(`🎯 Applying ${chunk.playbackSpeed}x speed to chunk ${i + 1}/${chunkFiles.length}`);
+    console.log(`🎯 Applying ${chunk.playbackSpeed}x speed to chunk ${i + 1}/${chunkFiles.length}`)
 
-    await applySpeedToChunk(inputFile, outputFile, chunk.playbackSpeed);
-    speedAdjustedChunks.push(outputFile);
+    await applySpeedToChunk(inputFile, outputFile, chunk.playbackSpeed)
+    speedAdjustedChunks.push(outputFile)
 
     // Force garbage collection after each speed adjustment
     if (global.gc) {
-      global.gc();
-      console.log('♻️ GC after speed adjustment');
+      global.gc()
+      console.log('♻️ GC after speed adjustment')
     }
 
     // Small pause between operations
-    await new Promise(resolve => setTimeout(resolve, 1000));
+    await new Promise(resolve => setTimeout(resolve, 1000))
   }
 
-  // Step 2: Concatenate using the concat FILTER, which is safer for timestamps
-  console.log('🔗 Concatenating speed-adjusted chunks using the concat filter...');
-  await filterBasedConcatenation(speedAdjustedChunks, outputPath);
+  // Step 2: Simple file-based concatenation (no filters)
+  console.log('🔗 Simple file-based concatenation of speed-adjusted chunks')
+  await simpleFileConcatenation(speedAdjustedChunks, outputPath)
 
   // Cleanup speed-adjusted chunks
-  await cleanupFiles(speedAdjustedChunks, 'speed-adjusted chunk');
+  await cleanupFiles(speedAdjustedChunks, 'speed-adjusted chunk')
 }
 
 // Apply speed adjustment to a single chunk
 async function applySpeedToChunk(inputPath: string, outputPath: string, speed: number): Promise<void> {
   return new Promise((resolve, reject) => {
-    const command = ffmpeg();
+    const command = ffmpeg()
 
     // Ultra memory-efficient settings
     command
@@ -816,7 +836,7 @@ async function applySpeedToChunk(inputPath: string, outputPath: string, speed: n
       // Apply speed adjustment with basic filters (no complex filter)
       command
         .videoFilters(`setpts=PTS/${speed}`)
-        .audioFilters(`atempo=${speed}`);
+        .audioFilters(`atempo=${speed}`)
     }
 
     command
@@ -827,59 +847,66 @@ async function applySpeedToChunk(inputPath: string, outputPath: string, speed: n
       .addOption('-crf', '30')            // Low quality to save memory
       .videoBitrate('100k')               // Very low bitrate
       .audioBitrate('32k')                // Very low audio bitrate
-      .output(outputPath);
+      .output(outputPath)
 
     command
       .on('start', () => {
-        console.log(`🎬 Speed adjustment ${speed}x started`);
+        console.log(`🎬 Speed adjustment ${speed}x started`)
       })
       .on('end', () => {
-        console.log(`✅ Speed adjustment ${speed}x completed`);
-        resolve();
+        console.log(`✅ Speed adjustment ${speed}x completed`)
+        resolve()
       })
       .on('error', (err) => {
-        console.error(`❌ Speed adjustment failed:`, err);
-        reject(err);
+        console.error(`❌ Speed adjustment failed:`, err)
+        reject(err)
       })
-      .run();
-  });
+      .run()
+  })
 }
 
-// Simple file-based concatenation using the concat FILTER (safer for varied timestamps)
-async function filterBasedConcatenation(chunkFiles: string[], outputPath: string): Promise<void> {
+// Simple file-based concatenation using the robust `concat` filter
+async function simpleFileConcatenation(chunkFiles: string[], outputPath: string): Promise<void> {
   return new Promise((resolve, reject) => {
-    console.log(`🔗 Concatenating ${chunkFiles.length} chunks using concat FILTER`);
+    console.log(`🔗 Concatenating ${chunkFiles.length} chunks with robust concat filter.`);
+
     const command = ffmpeg();
 
-    // Add each speed-adjusted chunk as a separate input
+    // Add all chunk files as separate inputs
     chunkFiles.forEach(file => {
       command.addInput(file);
     });
 
-    // Build the filter graph
+    // Create the complex filter string for concatenation
     const inputs = chunkFiles.map((_, index) => `[${index}:v][${index}:a]`).join('');
-    const filter = `${inputs}concat=n=${chunkFiles.length}:v=1:a=1[outv][outa]`;
+    const concatFilter = `${inputs}concat=n=${chunkFiles.length}:v=1:a=1[outv][outa]`;
 
     command
-      .complexFilter(filter)
+      .complexFilter(concatFilter)
       .map('[outv]')
-      .map('[outa]')
+      .map('[outa]');
+
+    // Output settings - re-encoding is necessary for the concat filter
+    command
       .addOption('-threads', '1')
-      .addOption('-preset', 'ultrafast')
-      .videoCodec('libx264') // Re-encoding is necessary with concat filter
+      .addOption('-bufsize', '64k')
+      .format('mp4')
+      .videoCodec('libx264')
       .audioCodec('aac')
+      .addOption('-preset', 'ultrafast')
       .output(outputPath);
 
     command
-      .on('start', (cmd) => {
-        console.log('🎬 Concat filter started:', cmd);
+      .on('start', (commandLine) => {
+        console.log('🎬 Concat filter command:', commandLine);
+        console.log('🎬 Simple concatenation started (using filter)');
       })
       .on('end', () => {
-        console.log('✅ Concat filter completed');
+        console.log('✅ Simple concatenation completed (using filter)');
         resolve();
       })
       .on('error', (err) => {
-        console.error('❌ Concat filter failed:', err);
+        console.error('❌ Simple concatenation failed (using filter):', err);
         reject(err);
       })
       .run();
@@ -1119,7 +1146,7 @@ async function cleanupFiles(files: string[], type: string): Promise<void> {
 }
 
 // Process a single section with proper speed control (Legacy)
-async function processSectionSeparately(params: {
+async function processSectionSeparately(params: { 
   inputVideos: string[]
   outputPath: string
   section: ExportJobData['videoSections'][0]
