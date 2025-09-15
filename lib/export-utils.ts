@@ -82,9 +82,9 @@ export async function generateSubtitleFile(
       console.log(`🎤 Participant ${participantIndex + 1} subtitle sync offset: ${syncOffset}s`)
 
       transcription.word_timestamps.words.forEach((word: { word: string; start: number; end: number }) => {
-        // Apply sync offset to subtitle timestamps (subtract offset to compensate for video delay)
-        const adjustedStart = word.start - syncOffset
-        const adjustedEnd = word.end - syncOffset
+        // Apply sync offset to subtitle timestamps (add offset to sync with delayed video)
+        const adjustedStart = word.start + syncOffset
+        const adjustedEnd = word.end + syncOffset
 
         // Skip words that become negative after offset adjustment
         if (adjustedStart < 0) {
@@ -115,8 +115,8 @@ export async function generateSubtitleFile(
   allWords.sort((a, b) => a.start - b.start)
   
   // CHUNKING: Group words into phrases based on natural pauses
-  const gapThreshold = 1.0 // 1 second gap = new phrase
-  const showWindow = 3.0 // Same 3-second window as in the editor
+  const gapThreshold = 0.5 // 0.5 second gap = new phrase (shorter phrases)
+  const showWindow = 2.0 // Shorter 2-second window for less text
   
   console.log(`Creating phrase chunks from ${allWords.length} words with ${gapThreshold}s gap threshold`)
   
