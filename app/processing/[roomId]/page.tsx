@@ -1,298 +1,382 @@
-'use client'
+"use client";
 
-import { useState, useEffect, useRef } from 'react'
-import { useParams, useRouter } from 'next/navigation'
-import { Button } from '@/components/ui/button'
-import { Progress } from '@/components/ui/progress'
-import { CheckCircle, Clock, Home, AlertCircle } from 'lucide-react'
+import { useState, useEffect, useRef } from "react";
+import { useParams, useRouter } from "next/navigation";
+import { Button } from "@/components/ui/button";
+import { Progress } from "@/components/ui/progress";
+import { CheckCircle, Clock, Home, AlertCircle } from "lucide-react";
 
 interface RecordingInstance {
-  instanceId: string
-  roomName: string
-  sessionId: string
-  startTime: string
-  status: string
+  instanceId: string;
+  roomName: string;
+  sessionId: string;
+  startTime: string;
+  status: string;
 }
 
 interface ProcessingStep {
-  id: string
-  name: string
-  status: 'pending' | 'processing' | 'completed' | 'error'
-  message?: string
+  id: string;
+  name: string;
+  status: "pending" | "processing" | "completed" | "error";
+  message?: string;
 }
 
 interface ProcessingData {
-  roomId: string
-  roomName: string
-  recordings: RecordingInstance[]
-  hadRecordingsSession?: boolean
+  roomId: string;
+  roomName: string;
+  recordings: RecordingInstance[];
+  hadRecordingsSession?: boolean;
 }
 
 export default function ProcessingPage() {
-  const params = useParams()
-  const router = useRouter()
-  const roomId = params.roomId as string
-  
-  const [processingData, setProcessingData] = useState<ProcessingData | null>(null)
+  const params = useParams();
+  const router = useRouter();
+  const roomId = params.roomId as string;
+
+  const [processingData, setProcessingData] = useState<ProcessingData | null>(
+    null
+  );
   const [steps, setSteps] = useState<ProcessingStep[]>([
-    { id: 'fetch', name: 'Scaricamento registrazioni da Daily.co', status: 'pending' },
-    { id: 'transcribe', name: 'Trascrizione con OpenAI Whisper', status: 'pending' },
-    { id: 'ai-edit', name: 'Analisi AI per editing automatico', status: 'pending' },
-    { id: 'save', name: 'Salvataggio su Supabase', status: 'pending' },
-    { id: 'complete', name: 'Processing completato', status: 'pending' }
-  ])
-  
-  const [currentStep, setCurrentStep] = useState(0)
-  const [isProcessing, setIsProcessing] = useState(false)
-  const [error, setError] = useState<string | null>(null)
-  const processingStarted = useRef(false)
+    {
+      id: "fetch",
+      name: "Scaricamento registrazioni da Daily.co",
+      status: "pending",
+    },
+    {
+      id: "transcribe",
+      name: "Trascrizione con OpenAI Whisper",
+      status: "pending",
+    },
+    {
+      id: "ai-edit",
+      name: "Analisi AI per editing automatico",
+      status: "pending",
+    },
+    { id: "save", name: "Salvataggio su Supabase", status: "pending" },
+    { id: "complete", name: "Processing completato", status: "pending" },
+  ]);
+
+  const [currentStep, setCurrentStep] = useState(0);
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const processingStarted = useRef(false);
 
   useEffect(() => {
     // Only run once when component mounts
-    if (processingStarted.current || isProcessing) return // Prevent duplicate calls
-    
+    if (processingStarted.current || isProcessing) return; // Prevent duplicate calls
+
     // Recupera i dati di processing dal sessionStorage
-    const storedData = sessionStorage.getItem('processingData')
+    const storedData = sessionStorage.getItem("processingData");
     if (storedData) {
-      const data: ProcessingData = JSON.parse(storedData)
-      console.log('Processing data from sessionStorage:', data)
-      console.log('Recordings to process:', data.recordings?.map(r => ({
-        instanceId: r.instanceId,
-        sessionId: r.sessionId,
-        roomName: r.roomName
-      })))
-      
-      setProcessingData(data)
-      processingStarted.current = true
+      const data: ProcessingData = JSON.parse(storedData);
+      console.log("Processing data from sessionStorage:", data);
+      console.log(
+        "Recordings to process:",
+        data.recordings?.map((r) => ({
+          instanceId: r.instanceId,
+          sessionId: r.sessionId,
+          roomName: r.roomName,
+        }))
+      );
+
+      setProcessingData(data);
+      processingStarted.current = true;
       // Inizia automaticamente il processing
-      startProcessing(data)
+      startProcessing(data);
     } else {
-      console.error('No processing data found in sessionStorage')
-      setError('Dati di processing non trovati')
+      console.error("No processing data found in sessionStorage");
+      setError("Dati di processing non trovati");
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []) // Empty dependency array ensures this runs only once
+  }, []); // Empty dependency array ensures this runs only once
 
-  const updateStep = (stepId: string, status: ProcessingStep['status'], message?: string) => {
-    setSteps(prev => prev.map(step => 
-      step.id === stepId 
-        ? { ...step, status, message } 
-        : step
-    ))
-  }
+  const updateStep = (
+    stepId: string,
+    status: ProcessingStep["status"],
+    message?: string
+  ) => {
+    setSteps((prev) =>
+      prev.map((step) =>
+        step.id === stepId ? { ...step, status, message } : step
+      )
+    );
+  };
 
   const waitForRoomRecordings = async (roomId: string) => {
-    const maxAttempts = 20 // 10 minuti massimo (30s per tentativo)
-    const delayBetweenAttempts = 30000 // 30 secondi
-    
+    const maxAttempts = 20; // 10 minuti massimo (30s per tentativo)
+    const delayBetweenAttempts = 30000; // 30 secondi
+
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       try {
-        console.log(`Polling attempt ${attempt}/${maxAttempts} for room recordings...`)
-        updateStep('fetch', 'processing', `Controllo registrazioni room (tentativo ${attempt}/${maxAttempts})...`)
-        
+        console.log(
+          `Polling attempt ${attempt}/${maxAttempts} for room recordings...`
+        );
+        updateStep(
+          "fetch",
+          "processing",
+          `Controllo registrazioni room (tentativo ${attempt}/${maxAttempts})...`
+        );
+
         // Call API that searches by room name only
-        const fetchResponse = await fetch('/api/recordings/fetch-by-room', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+        const fetchResponse = await fetch("/api/recordings/fetch-by-room", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
-            roomId: roomId
-          })
-        })
+            roomId: roomId,
+          }),
+        });
 
         if (!fetchResponse.ok) {
-          throw new Error('Errore durante il controllo delle registrazioni')
+          throw new Error("Errore durante il controllo delle registrazioni");
         }
 
-        const fetchData = await fetchResponse.json()
-        
+        const fetchData = await fetchResponse.json();
+
         // Se abbiamo registrazioni finished, le ritorniamo
         if (fetchData.downloadedCount > 0) {
-          console.log(`Found ${fetchData.downloadedCount} finished recordings after ${attempt} attempts`)
-          return fetchData
+          console.log(
+            `Found ${fetchData.downloadedCount} finished recordings after ${attempt} attempts`
+          );
+          return fetchData;
         }
-        
+
         // Se è l'ultimo tentativo, ritorniamo l'errore/vuoto
         if (attempt === maxAttempts) {
-          console.log('Max polling attempts reached')
-          return fetchData
+          console.log("Max polling attempts reached");
+          return fetchData;
         }
-        
+
         // Aspetta prima del prossimo tentativo
-        console.log(`No finished recordings found, waiting ${delayBetweenAttempts/1000}s before next attempt...`)
-        updateStep('fetch', 'processing', `Registrazioni ancora in processing, riprovo tra 30 secondi... (${attempt}/${maxAttempts})`)
-        
-        await new Promise(resolve => setTimeout(resolve, delayBetweenAttempts))
-        
+        console.log(
+          `No finished recordings found, waiting ${
+            delayBetweenAttempts / 1000
+          }s before next attempt...`
+        );
+        updateStep(
+          "fetch",
+          "processing",
+          `Registrazioni ancora in processing, riprovo tra 30 secondi... (${attempt}/${maxAttempts})`
+        );
+
+        await new Promise((resolve) =>
+          setTimeout(resolve, delayBetweenAttempts)
+        );
       } catch (error) {
-        console.error(`Error in polling attempt ${attempt}:`, error)
-        
+        console.error(`Error in polling attempt ${attempt}:`, error);
+
         if (attempt === maxAttempts) {
-          throw error
+          throw error;
         }
-        
-        await new Promise(resolve => setTimeout(resolve, delayBetweenAttempts))
+
+        await new Promise((resolve) =>
+          setTimeout(resolve, delayBetweenAttempts)
+        );
       }
     }
-    
-    throw new Error('Timeout waiting for recordings to be ready')
-  }
+
+    throw new Error("Timeout waiting for recordings to be ready");
+  };
 
   const startProcessing = async (data: ProcessingData) => {
-    setIsProcessing(true)
-    setError(null)
+    setIsProcessing(true);
+    setError(null);
 
     try {
       // Step 1: Find finished recordings for this room
-      updateStep('fetch', 'processing', 'Cercando registrazioni per questa room...')
-      
-      const fetchData = await waitForRoomRecordings(data.roomId)
-      
+      updateStep(
+        "fetch",
+        "processing",
+        "Cercando registrazioni per questa room..."
+      );
+
+      const fetchData = await waitForRoomRecordings(data.roomId);
+
       if (fetchData.downloadedCount === 0 && fetchData.errors) {
         // Show specific error messages
-        const errorMsg = fetchData.errors.join('. ')
-        updateStep('fetch', 'error', errorMsg)
-        throw new Error(`Nessuna registrazione disponibile: ${errorMsg}`)
+        const errorMsg = fetchData.errors.join(". ");
+        updateStep("fetch", "error", errorMsg);
+        throw new Error(`Nessuna registrazione disponibile: ${errorMsg}`);
       }
-      
-      updateStep('fetch', 'completed', `${fetchData.downloadedCount} registrazioni scaricate`)
-      setCurrentStep(1)
+
+      updateStep(
+        "fetch",
+        "completed",
+        `${fetchData.downloadedCount} registrazioni scaricate`
+      );
+      setCurrentStep(1);
 
       // Step 2: Transcribe
-      updateStep('transcribe', 'processing', `Trascrizione di ${fetchData.recordings.length} registrazioni in corso... (può richiedere alcuni minuti)`)
-      
+      updateStep(
+        "transcribe",
+        "processing",
+        `Trascrizione di ${fetchData.recordings.length} registrazioni in corso... (può richiedere alcuni minuti)`
+      );
+
       // Create AbortController with extended timeout for large files
-      const controller = new AbortController()
+      const controller = new AbortController();
       const timeoutId = setTimeout(() => {
-        controller.abort()
-      }, 300000) // 5 minutes timeout
+        controller.abort();
+      }, 300000); // 5 minutes timeout
 
       // Show progress updates during transcription
       const progressInterval = setInterval(() => {
-        updateStep('transcribe', 'processing', `Trascrizione in corso... OpenAI sta processando ${fetchData.recordings.length} file (operazione lunga)`)
-      }, 10000) // Update every 10 seconds
-      
-      let transcribeResponse
+        updateStep(
+          "transcribe",
+          "processing",
+          `Trascrizione in corso... OpenAI sta processando ${fetchData.recordings.length} file (operazione lunga)`
+        );
+      }, 10000); // Update every 10 seconds
+
+      let transcribeResponse;
       try {
-        transcribeResponse = await fetch('/api/recordings/transcribe', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
+        transcribeResponse = await fetch("/api/recordings/transcribe", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             roomId: data.roomId,
-            recordings: fetchData.recordings
+            recordings: fetchData.recordings,
           }),
-          signal: controller.signal
-        })
+          signal: controller.signal,
+        });
 
-        clearTimeout(timeoutId)
-        clearInterval(progressInterval)
+        clearTimeout(timeoutId);
+        clearInterval(progressInterval);
 
         if (!transcribeResponse.ok) {
-          const errorText = await transcribeResponse.text()
-          console.error('Transcribe API error:', errorText)
-          throw new Error(`Errore durante la trascrizione: ${transcribeResponse.status}`)
+          const errorText = await transcribeResponse.text();
+          console.error("Transcribe API error:", errorText);
+          throw new Error(
+            `Errore durante la trascrizione: ${transcribeResponse.status}`
+          );
         }
       } catch (fetchError) {
-        clearTimeout(timeoutId)
-        clearInterval(progressInterval)
-        if (fetchError instanceof Error && fetchError.name === 'AbortError') {
-          throw new Error('Timeout durante la trascrizione - il file potrebbe essere troppo grande')
+        clearTimeout(timeoutId);
+        clearInterval(progressInterval);
+        if (fetchError instanceof Error && fetchError.name === "AbortError") {
+          throw new Error(
+            "Timeout durante la trascrizione - il file potrebbe essere troppo grande"
+          );
         }
-        throw fetchError
+        throw fetchError;
       }
 
-      const transcribeData = await transcribeResponse.json()
-      updateStep('transcribe', 'completed', `${transcribeData.transcriptionsCount} trascrizioni completate`)
-      setCurrentStep(2)
+      const transcribeData = await transcribeResponse.json();
+      updateStep(
+        "transcribe",
+        "completed",
+        `${transcribeData.transcriptionsCount} trascrizioni completate`
+      );
+      setCurrentStep(2);
 
       // Step 3: AI Editing Analysis
-      updateStep('ai-edit', 'processing', 'AI sta analizzando la conversazione per creare focus segments automatici...')
-      
-      const aiEditResponse = await fetch('/api/recordings/ai-edit', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+      updateStep(
+        "ai-edit",
+        "processing",
+        "AI sta analizzando la conversazione per creare focus segments automatici..."
+      );
+
+      const aiEditResponse = await fetch("/api/recordings/ai-edit", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           roomId: data.roomId,
           transcriptions: transcribeData.transcriptions,
-          recordings: transcribeData.recordings
-        })
-      })
+          recordings: transcribeData.recordings,
+        }),
+      });
 
       if (!aiEditResponse.ok) {
-        console.error('AI editing failed, continuing without it')
-        updateStep('ai-edit', 'error', 'AI editing fallito - continuo senza focus automatici')
+        console.error("AI editing failed, continuing without it");
+        updateStep(
+          "ai-edit",
+          "error",
+          "AI editing fallito - continuo senza focus automatici"
+        );
       } else {
-        const aiEditData = await aiEditResponse.json()
-        updateStep('ai-edit', 'completed', `${aiEditData.result.focusSegments.length} focus segments e ${aiEditData.result.speedRecommendations?.length || 0} raccomandazioni velocità generati automaticamente`)
+        const aiEditData = await aiEditResponse.json();
+        updateStep(
+          "ai-edit",
+          "completed",
+          `${aiEditData.result.focusSegments.length} focus segments e ${
+            aiEditData.result.speedRecommendations?.length || 0
+          } raccomandazioni velocità generati automaticamente`
+        );
         // Store AI editing results for the save step
-        transcribeData.aiEditingResult = aiEditData.result
+        transcribeData.aiEditingResult = aiEditData.result;
       }
-      
-      setCurrentStep(3)
+
+      setCurrentStep(3);
 
       // Step 4: Save to Supabase
-      updateStep('save', 'processing', 'Salvataggio dati...')
-      
-      const saveResponse = await fetch('/api/recordings/save', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+      updateStep("save", "processing", "Salvataggio dati...");
+
+      const saveResponse = await fetch("/api/recordings/save", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           roomId: data.roomId,
           recordings: transcribeData.recordings, // Now includes start_ts from Daily.co
           transcriptions: transcribeData.transcriptions,
-          aiEditingResult: transcribeData.aiEditingResult // Include AI-generated focus segments
-        })
-      })
+          aiEditingResult: transcribeData.aiEditingResult, // Include AI-generated focus segments
+        }),
+      });
 
       if (!saveResponse.ok) {
-        throw new Error('Errore durante il salvataggio')
+        throw new Error("Errore durante il salvataggio");
       }
 
-      updateStep('save', 'completed', 'Dati salvati su database')
-      setCurrentStep(4)
+      updateStep("save", "completed", "Dati salvati su database");
+      setCurrentStep(4);
 
       // Step 5: Complete
-      updateStep('complete', 'completed', 'Processing completato con successo!')
-      
+      updateStep(
+        "complete",
+        "completed",
+        "Processing completato con successo!"
+      );
+
       // Clear session storage
-      sessionStorage.removeItem('processingData')
-      
+      sessionStorage.removeItem("processingData");
     } catch (error) {
-      console.error('Processing error:', error)
-      const errorMessage = error instanceof Error ? error.message : 'Errore sconosciuto'
-      setError(errorMessage)
-      
+      console.error("Processing error:", error);
+      const errorMessage =
+        error instanceof Error ? error.message : "Errore sconosciuto";
+      setError(errorMessage);
+
       // Mark current step as error
       if (currentStep < steps.length) {
-        updateStep(steps[currentStep].id, 'error', errorMessage)
+        updateStep(steps[currentStep].id, "error", errorMessage);
       }
     } finally {
-      setIsProcessing(false)
+      setIsProcessing(false);
     }
-  }
+  };
 
   const getStepIcon = (step: ProcessingStep) => {
     switch (step.status) {
-      case 'completed':
-        return <CheckCircle className="h-6 w-6 text-green-600" />
-      case 'processing':
-        return <Clock className="h-6 w-6 text-blue-600 animate-spin" />
-      case 'error':
-        return <AlertCircle className="h-6 w-6 text-red-600" />
+      case "completed":
+        return <CheckCircle className="h-6 w-6 text-green-600" />;
+      case "processing":
+        return <Clock className="h-6 w-6 text-blue-600 animate-spin" />;
+      case "error":
+        return <AlertCircle className="h-6 w-6 text-red-600" />;
       default:
-        return <div className="h-6 w-6 border-2 border-gray-300 rounded-full" />
+        return (
+          <div className="h-6 w-6 border-2 border-gray-300 rounded-full" />
+        );
     }
-  }
+  };
 
   const goHome = () => {
-    router.push('/')
-  }
+    router.push("/");
+  };
 
   if (!processingData && !error) {
     return (
       <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-purple-50 flex items-center justify-center">
         <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
       </div>
-    )
+    );
   }
 
   return (
@@ -307,11 +391,6 @@ export default function ProcessingPage() {
               <p className="text-gray-600">
                 Room: <span className="font-mono font-medium">{roomId}</span>
               </p>
-              {processingData && (
-                <p className="text-sm text-gray-500 mt-2">
-                  {processingData.recordings.length} registrazioni da processare
-                </p>
-              )}
             </div>
 
             {error && (
@@ -329,13 +408,13 @@ export default function ProcessingPage() {
                 <div
                   key={step.id}
                   className={`flex items-center space-x-4 p-4 rounded-lg ${
-                    step.status === 'completed'
-                      ? 'bg-green-50'
-                      : step.status === 'processing'
-                      ? 'bg-blue-50'
-                      : step.status === 'error'
-                      ? 'bg-red-50'
-                      : 'bg-gray-50'
+                    step.status === "completed"
+                      ? "bg-green-50"
+                      : step.status === "processing"
+                      ? "bg-blue-50"
+                      : step.status === "error"
+                      ? "bg-red-50"
+                      : "bg-gray-50"
                   }`}
                 >
                   {getStepIcon(step)}
@@ -359,24 +438,20 @@ export default function ProcessingPage() {
                     {currentStep + 1} / {steps.length}
                   </span>
                 </div>
-                <Progress 
-                  value={((currentStep + 1) / steps.length) * 100} 
+                <Progress
+                  value={((currentStep + 1) / steps.length) * 100}
                   className="h-2"
                 />
               </div>
             )}
 
             <div className="flex space-x-4">
-              <Button
-                onClick={goHome}
-                variant="outline"
-                className="flex-1"
-              >
+              <Button onClick={goHome} variant="outline" className="flex-1">
                 <Home className="h-4 w-4 mr-2" />
                 Torna alla Home
               </Button>
-              
-              {steps[steps.length - 1].status === 'completed' && (
+
+              {steps[steps.length - 1].status === "completed" && (
                 <Button
                   onClick={() => router.push(`/edit/${roomId}`)}
                   className="flex-1 bg-green-600 hover:bg-green-700"
@@ -390,5 +465,5 @@ export default function ProcessingPage() {
         </div>
       </div>
     </div>
-  )
+  );
 }

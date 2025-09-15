@@ -231,64 +231,102 @@ export function buildFFmpegCommand(data: {
     })
     console.log('👥 Recording to video mapping:', recordingVideoMap)
     
-    // OVERLAY-BASED FOCUS: Base 50/50 with dynamic full-screen overlays
-    const section = validSections[0] // Use only first section for now
-    console.log(`📹 Processing section ${section.startTime.toFixed(2)}s-${section.endTime.toFixed(2)}s`)
+    // OVERLAY-BASED FOCUS: Base 50/50 with dynamic full-screen overlays - MULTI-SECTION SUPPORT
+    console.log(`📹 Processing ${validSections.length} sections with OVERLAY-BASED FOCUS`)
     console.log(`🎯 Focus segments:`, focusSegments)
-    
-    if (inputVideos.length === 2) {
-      // Create base 50/50 layout with center crop to maintain aspect ratio
-      console.log(`📱 Creating base 50/50 grid with center crop to avoid squishing`)
-      filterComplex.push(
-        `[0:v]trim=${section.startTime.toFixed(2)}:${section.endTime.toFixed(2)},crop=720:720:280:0,scale=640:720,setsar=1/1[v0]`,
-        `[1:v]trim=${section.startTime.toFixed(2)}:${section.endTime.toFixed(2)},crop=720:720:280:0,scale=640:720,setsar=1/1[v1]`,
-        `[v0][v1]hstack[base_video]`
-      )
-      
-      let currentVideoStream = '[base_video]'
-      
-      // Apply focus overlays based on focus segments
-      focusSegments.forEach((fs, index) => {
-        if (fs.focusedParticipantId && recordingVideoMap[fs.focusedParticipantId] !== undefined) {
-          const videoIndex = recordingVideoMap[fs.focusedParticipantId]
-          const overlayName = `overlay${index}`
-          const fullStreamName = `full${videoIndex}_${index}`
-          
-          console.log(`🎯 Adding focus overlay ${index}: participant ${fs.focusedParticipantId} (video ${videoIndex}) from ${fs.startTime.toFixed(2)}s to ${fs.endTime.toFixed(2)}s`)
-          
-          // Create individual full-screen stream for this overlay to avoid reuse
-          filterComplex.push(
-            `[${videoIndex}:v]trim=${section.startTime.toFixed(2)}:${section.endTime.toFixed(2)},scale=1280:720,setsar=1/1[${fullStreamName}]`
-          )
-          
-          // Create overlay filter with enable expression for time range
-          const enableExpr = `'between(t,${fs.startTime.toFixed(2)},${fs.endTime.toFixed(2)})'`
-          filterComplex.push(
-            `${currentVideoStream}[${fullStreamName}]overlay=enable=${enableExpr}[${overlayName}]`
-          )
-          
-          currentVideoStream = `[${overlayName}]`
-        }
-      })
-      
-      // Set final video stream
-      if (currentVideoStream !== '[base_video]') {
-        filterComplex.push(`${currentVideoStream}null[finalvideo]`)
+
+    // Process each section with speed control and overlay focus
+    const sectionVideoStreams: string[] = []
+    const sectionAudioStreams: string[] = []
+
+    validSections.forEach((section, sectionIndex) => {
+      console.log(`📹 Section ${sectionIndex}: ${section.startTime.toFixed(2)}s-${section.endTime.toFixed(2)}s (speed: x${section.playbackSpeed})`)
+
+      // Speed control filters
+      const speedFilter = section.playbackSpeed !== 1 ? `,setpts=PTS/${section.playbackSpeed}` : ''
+      const audioSpeedFilter = section.playbackSpeed !== 1 ? `,atempo=${section.playbackSpeed}` : ''
+
+      if (inputVideos.length === 2) {
+        // Create base 50/50 layout with center crop + speed control
+        console.log(`📱 Section ${sectionIndex}: Creating base 50/50 grid with speed x${section.playbackSpeed}`)
+        filterComplex.push(
+          `[0:v]trim=${section.startTime.toFixed(2)}:${section.endTime.toFixed(2)},crop=720:720:280:0,scale=640:720,setsar=1/1${speedFilter}[v0_s${sectionIndex}]`,
+          `[1:v]trim=${section.startTime.toFixed(2)}:${section.endTime.toFixed(2)},crop=720:720:280:0,scale=640:720,setsar=1/1${speedFilter}[v1_s${sectionIndex}]`,
+          `[v0_s${sectionIndex}][v1_s${sectionIndex}]hstack[base_video_s${sectionIndex}]`
+        )
+
+        let currentVideoStream = `[base_video_s${sectionIndex}]`
+
+        // Apply focus overlays for this section (filter focus segments by section timing)
+        const sectionFocusSegments = focusSegments.filter(fs =>
+          fs.startTime >= section.startTime && fs.endTime <= section.endTime
+        )
+
+        sectionFocusSegments.forEach((fs, fsIndex) => {
+          if (fs.focusedParticipantId && recordingVideoMap[fs.focusedParticipantId] !== undefined) {
+            const videoIndex = recordingVideoMap[fs.focusedParticipantId]
+            const overlayName = `overlay_s${sectionIndex}_${fsIndex}`
+            const fullStreamName = `full${videoIndex}_s${sectionIndex}_${fsIndex}`
+
+            console.log(`🎯 Section ${sectionIndex} focus overlay ${fsIndex}: participant ${fs.focusedParticipantId} (video ${videoIndex}) from ${fs.startTime.toFixed(2)}s to ${fs.endTime.toFixed(2)}s`)
+
+            // Create individual full-screen stream with speed control
+            filterComplex.push(
+              `[${videoIndex}:v]trim=${section.startTime.toFixed(2)}:${section.endTime.toFixed(2)},scale=1280:720,setsar=1/1${speedFilter}[${fullStreamName}]`
+            )
+
+            // Adjust timing relative to section start and account for speed
+            const relativeStart = Math.max(0, fs.startTime - section.startTime) / section.playbackSpeed
+            const relativeEnd = Math.min(section.endTime - section.startTime, fs.endTime - section.startTime) / section.playbackSpeed
+
+            const enableExpr = `'between(t,${relativeStart.toFixed(2)},${relativeEnd.toFixed(2)})'`
+            filterComplex.push(
+              `${currentVideoStream}[${fullStreamName}]overlay=enable=${enableExpr}[${overlayName}]`
+            )
+
+            currentVideoStream = `[${overlayName}]`
+          }
+        })
+
+        // Set final video stream for this section
+        const sectionFinalVideo = `section${sectionIndex}_video`
+        filterComplex.push(`${currentVideoStream}null[${sectionFinalVideo}]`)
+        sectionVideoStreams.push(`[${sectionFinalVideo}]`)
+
+        // Audio mixing for this section with speed control
+        const sectionFinalAudio = `section${sectionIndex}_audio`
+        filterComplex.push(
+          `[0:a]atrim=${section.startTime.toFixed(2)}:${section.endTime.toFixed(2)}${audioSpeedFilter}[a0_s${sectionIndex}]`,
+          `[1:a]atrim=${section.startTime.toFixed(2)}:${section.endTime.toFixed(2)}${audioSpeedFilter}[a1_s${sectionIndex}]`,
+          `[a0_s${sectionIndex}][a1_s${sectionIndex}]amix=inputs=2[${sectionFinalAudio}]`
+        )
+        sectionAudioStreams.push(`[${sectionFinalAudio}]`)
+
       } else {
-        filterComplex.push(`[base_video]null[finalvideo]`)
+        // Single video with speed control
+        const sectionFinalVideo = `section${sectionIndex}_video`
+        const sectionFinalAudio = `section${sectionIndex}_audio`
+        filterComplex.push(
+          `[0:v]trim=${section.startTime.toFixed(2)}:${section.endTime.toFixed(2)},scale=1280:720,setsar=1/1${speedFilter}[${sectionFinalVideo}]`,
+          `[0:a]atrim=${section.startTime.toFixed(2)}:${section.endTime.toFixed(2)}${audioSpeedFilter}[${sectionFinalAudio}]`
+        )
+        sectionVideoStreams.push(`[${sectionFinalVideo}]`)
+        sectionAudioStreams.push(`[${sectionFinalAudio}]`)
       }
-      
-      // Audio mixing (always mix both participants)
+    })
+
+    // Concatenate all sections into final streams
+    if (sectionVideoStreams.length > 1) {
+      console.log(`🔗 Concatenating ${sectionVideoStreams.length} sections`)
       filterComplex.push(
-        `[0:a]atrim=${section.startTime.toFixed(2)}:${section.endTime.toFixed(2)}[a0]`,
-        `[1:a]atrim=${section.startTime.toFixed(2)}:${section.endTime.toFixed(2)}[a1]`,
-        `[a0][a1]amix=inputs=2[finalaudio]`
+        `${sectionVideoStreams.join('')}concat=n=${sectionVideoStreams.length}:v=1:a=0[finalvideo]`,
+        `${sectionAudioStreams.join('')}concat=n=${sectionAudioStreams.length}:v=0:a=1[finalaudio]`
       )
     } else {
-      // Single video
+      // Single section, no concatenation needed
       filterComplex.push(
-        `[0:v]trim=${section.startTime.toFixed(2)}:${section.endTime.toFixed(2)},scale=1280:720,setsar=1/1[finalvideo]`,
-        `[0:a]atrim=${section.startTime.toFixed(2)}:${section.endTime.toFixed(2)}[finalaudio]`
+        `${sectionVideoStreams[0]}null[finalvideo]`,
+        `${sectionAudioStreams[0]}null[finalaudio]`
       )
     }
     
