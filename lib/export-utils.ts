@@ -789,15 +789,15 @@ async function simpleSequentialConcat(
 ): Promise<void> {
   console.log('🔗 Ultra-simple sequential concatenation (Railway-safe)')
 
-  // Step 1: Apply speed to each chunk individually (one at a time)
+  // Step 1: Apply speed to each chunk individually and convert to .ts format
   const speedAdjustedChunks: string[] = []
 
   for (let i = 0; i < chunkFiles.length; i++) {
     const chunk = chunks[i]
     const inputFile = chunkFiles[i]
-    const outputFile = outputPath.replace('.mp4', `_speed_${i}.mp4`)
+    const outputFile = outputPath.replace('.mp4', `_speed_${i}.ts`) // <-- Changed to .ts
 
-    console.log(`🎯 Applying ${chunk.playbackSpeed}x speed to chunk ${i + 1}/${chunkFiles.length}`)
+    console.log(`🎯 Applying ${chunk.playbackSpeed}x speed to chunk ${i + 1}/${chunkFiles.length} and converting to .ts`)
 
     await applySpeedToChunk(inputFile, outputFile, chunk.playbackSpeed)
     speedAdjustedChunks.push(outputFile)
@@ -812,15 +812,15 @@ async function simpleSequentialConcat(
     await new Promise(resolve => setTimeout(resolve, 1000))
   }
 
-  // Step 2: Simple file-based concatenation (no filters)
-  console.log('🔗 Simple file-based concatenation of speed-adjusted chunks')
+  // Step 2: Simple file-based concatenation of .ts chunks
+  console.log('🔗 Simple file-based concatenation of speed-adjusted .ts chunks')
   await simpleFileConcatenation(speedAdjustedChunks, outputPath)
 
-  // Cleanup speed-adjusted chunks
+  // Cleanup speed-adjusted .ts chunks
   await cleanupFiles(speedAdjustedChunks, 'speed-adjusted chunk')
 }
 
-// Apply speed adjustment to a single chunk
+// Apply speed adjustment to a single chunk and convert to MPEG Transport Stream (.ts)
 async function applySpeedToChunk(inputPath: string, outputPath: string, speed: number): Promise<void> {
   return new Promise((resolve, reject) => {
     const command = ffmpeg()
@@ -840,9 +840,10 @@ async function applySpeedToChunk(inputPath: string, outputPath: string, speed: n
     }
 
     command
-      .format('mp4')
+      .format('mpegts') // <-- Changed to transport stream
       .videoCodec('libx264')
       .audioCodec('aac')
+      .addOption('-bsf:v', 'h264_mp4toannexb') // <-- Added bitstream filter for TS compatibility
       .addOption('-preset', 'ultrafast')
       .addOption('-crf', '30')            // Low quality to save memory
       .videoBitrate('100k')               // Very low bitrate
@@ -850,63 +851,70 @@ async function applySpeedToChunk(inputPath: string, outputPath: string, speed: n
       .output(outputPath)
 
     command
-      .on('start', () => {
-        console.log(`🎬 Speed adjustment ${speed}x started`)
+      .on('start', (commandLine) => {
+        console.log(`🎬 Speed adjustment ${speed}x to .ts started:`, commandLine)
       })
       .on('end', () => {
-        console.log(`✅ Speed adjustment ${speed}x completed`)
+        console.log(`✅ Speed adjustment ${speed}x to .ts completed`)
         resolve()
       })
       .on('error', (err) => {
-        console.error(`❌ Speed adjustment failed:`, err)
+        console.error(`❌ Speed adjustment to .ts failed:`, err)
         reject(err)
       })
       .run()
   })
 }
 
-// Simple file-based concatenation using the robust `concat` filter
+// Simple, memory-efficient concatenation of .ts files using the concat demuxer.
 async function simpleFileConcatenation(chunkFiles: string[], outputPath: string): Promise<void> {
   return new Promise((resolve, reject) => {
-    console.log(`🔗 Concatenating ${chunkFiles.length} chunks with robust concat filter.`);
+    const concatListPath = outputPath.replace('.mp4', '_concat.txt');
+    const concatContent = chunkFiles.map(file => `file '${file}'`).join('\n');
+
+    try {
+      fs.writeFileSync(concatListPath, concatContent, 'utf8');
+    } catch (error) {
+      reject(new Error(`Failed to create concat list: ${error}`));
+      return;
+    }
 
     const command = ffmpeg();
 
-    // Add all chunk files as separate inputs
-    chunkFiles.forEach(file => {
-      command.addInput(file);
-    });
-
-    // Create the complex filter string for concatenation
-    const inputs = chunkFiles.map((_, index) => `[${index}:v][${index}:a]`).join('');
-    const concatFilter = `${inputs}concat=n=${chunkFiles.length}:v=1:a=1[outv][outa]`;
-
     command
-      .complexFilter(concatFilter)
-      .map('[outv]')
-      .map('[outa]');
-
-    // Output settings - re-encoding is necessary for the concat filter
-    command
-      .addOption('-threads', '1')
-      .addOption('-bufsize', '64k')
+      .input(concatListPath)
+      .inputOptions(['-f', 'concat', '-safe', '0'])
+      .outputOptions('-c', 'copy') // Copy codecs directly, very fast and light
+      .outputOptions('-bsf:a', 'aac_adtstoasc') // Required bitstream filter for AAC in MP4
       .format('mp4')
-      .videoCodec('libx264')
-      .audioCodec('aac')
-      .addOption('-preset', 'ultrafast')
       .output(outputPath);
 
     command
       .on('start', (commandLine) => {
-        console.log('🎬 Concat filter command:', commandLine);
-        console.log('🎬 Simple concatenation started (using filter)');
+        console.log('🎬 Starting .ts concatenation and remux to .mp4:', commandLine);
       })
       .on('end', () => {
-        console.log('✅ Simple concatenation completed (using filter)');
+        console.log('✅ .ts concatenation and remux to .mp4 completed');
+        // Cleanup concat list
+        try {
+          if (fs.existsSync(concatListPath)) {
+            fs.unlinkSync(concatListPath);
+          }
+        } catch (error) {
+          console.warn('⚠️ Failed to cleanup concat list:', error);
+        }
         resolve();
       })
       .on('error', (err) => {
-        console.error('❌ Simple concatenation failed (using filter):', err);
+        console.error('❌ .ts concatenation failed:', err);
+        // Cleanup on error
+        try {
+          if (fs.existsSync(concatListPath)) {
+            fs.unlinkSync(concatListPath);
+          }
+        } catch (cleanupError) {
+          console.warn('⚠️ Failed to cleanup on error:', cleanupError);
+        }
         reject(err);
       })
       .run();
