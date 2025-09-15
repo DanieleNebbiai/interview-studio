@@ -802,6 +802,9 @@ async function simpleSequentialConcat(
     await applySpeedToChunk(inputFile, outputFile, chunk.playbackSpeed)
     speedAdjustedChunks.push(outputFile)
 
+    // *** DEBUG LOG ***
+    await logVideoProperties(outputFile, `Speed-adjusted chunk ${i + 1} (${chunk.playbackSpeed}x speed)`)
+
     // Force garbage collection after each speed adjustment
     if (global.gc) {
       global.gc()
