@@ -684,10 +684,11 @@ async function processChunkMemorySafe(params: {
       // Memory-efficient 50/50 layout for this chunk
       // DON'T apply speed here - just process the raw segment
       console.log(`📱 Processing chunk: ${chunkDuration.toFixed(1)}s (speed will be applied during concatenation)`)
+      console.log(`🔧 Using trim with duration: start=${chunk.startTime.toFixed(2)}s, duration=${chunkDuration.toFixed(2)}s`)
 
       filterComplex.push(
-        `[0:v]trim=${chunk.startTime.toFixed(2)}:${chunk.endTime.toFixed(2)},crop=720:720:280:0,scale=640:720,setsar=1/1[v0_c${chunkIndex}]`,
-        `[1:v]trim=${chunk.startTime.toFixed(2)}:${chunk.endTime.toFixed(2)},crop=720:720:280:0,scale=640:720,setsar=1/1[v1_c${chunkIndex}]`,
+        `[0:v]trim=${chunk.startTime.toFixed(2)},duration=${chunkDuration.toFixed(2)},crop=720:720:280:0,scale=640:720,setsar=1/1[v0_c${chunkIndex}]`,
+        `[1:v]trim=${chunk.startTime.toFixed(2)},duration=${chunkDuration.toFixed(2)},crop=720:720:280:0,scale=640:720,setsar=1/1[v1_c${chunkIndex}]`,
         `[v0_c${chunkIndex}][v1_c${chunkIndex}]hstack[base_video_c${chunkIndex}]`
       )
 
@@ -712,7 +713,7 @@ async function processChunkMemorySafe(params: {
           const fullStreamName = `full${videoIndex}_c${chunkIndex}`
 
           filterComplex.push(
-            `[${videoIndex}:v]trim=${chunk.startTime.toFixed(2)}:${chunk.endTime.toFixed(2)},scale=1280:720,setsar=1/1[${fullStreamName}]`
+            `[${videoIndex}:v]trim=${chunk.startTime.toFixed(2)},duration=${chunkDuration.toFixed(2)},scale=1280:720,setsar=1/1[${fullStreamName}]`
           )
 
           const relativeStart = Math.max(0, fs.startTime - chunk.startTime)
@@ -731,18 +732,19 @@ async function processChunkMemorySafe(params: {
 
       // Audio without speed adjustment (will be applied during concatenation)
       filterComplex.push(
-        `[0:a]atrim=${chunk.startTime.toFixed(2)}:${chunk.endTime.toFixed(2)}[a0_c${chunkIndex}]`,
-        `[1:a]atrim=${chunk.startTime.toFixed(2)}:${chunk.endTime.toFixed(2)}[a1_c${chunkIndex}]`,
+        `[0:a]atrim=${chunk.startTime.toFixed(2)},duration=${chunkDuration.toFixed(2)}[a0_c${chunkIndex}]`,
+        `[1:a]atrim=${chunk.startTime.toFixed(2)},duration=${chunkDuration.toFixed(2)}[a1_c${chunkIndex}]`,
         `[a0_c${chunkIndex}][a1_c${chunkIndex}]amix=inputs=2[finalaudio]`
       )
 
     } else {
       // Single video processing (memory-efficient)
       console.log(`📱 Single video chunk: ${chunkDuration.toFixed(1)}s (speed will be applied during concatenation)`)
+      console.log(`🔧 Using trim with duration: start=${chunk.startTime.toFixed(2)}s, duration=${chunkDuration.toFixed(2)}s`)
 
       filterComplex.push(
-        `[0:v]trim=${chunk.startTime.toFixed(2)}:${chunk.endTime.toFixed(2)},scale=1280:720,setsar=1/1[finalvideo]`,
-        `[0:a]atrim=${chunk.startTime.toFixed(2)}:${chunk.endTime.toFixed(2)}[finalaudio]`
+        `[0:v]trim=${chunk.startTime.toFixed(2)},duration=${chunkDuration.toFixed(2)},scale=1280:720,setsar=1/1[finalvideo]`,
+        `[0:a]atrim=${chunk.startTime.toFixed(2)},duration=${chunkDuration.toFixed(2)}[finalaudio]`
       )
     }
 
