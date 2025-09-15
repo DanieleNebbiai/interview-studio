@@ -241,7 +241,7 @@ export async function buildFFmpegCommandMemorySafe(data: {
   console.log(`📊 Total content duration: ${validSections.reduce((t, s) => t + (s.endTime - s.startTime), 0).toFixed(1)}s`)
 
   // Memory-safe configuration
-  const CHUNK_MAX_DURATION = 30 // Max 30 seconds per chunk to limit memory
+  const CHUNK_MAX_DURATION = 10 // Max 10 seconds per chunk to limit memory
   const GC_DELAY = 2000 // 2s pause between chunks for garbage collection
 
   // Create recording ID to video index mapping
