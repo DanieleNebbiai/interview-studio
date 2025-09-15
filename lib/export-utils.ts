@@ -713,7 +713,7 @@ async function processChunkMemorySafe(params: {
         `[a0_c${chunkIndex}][a1_c${chunkIndex}]amix=inputs=2[audio_c${chunkIndex}]`
       )
 
-      let currentVideoStream = `[base_video_c${chunkIndex}]`
+      const currentVideoStream = `[base_video_c${chunkIndex}]`
 
       // TEMPORARILY DISABLED: Focus overlays to isolate trim duration issue
       console.log(`🚫 Focus overlays temporarily disabled for memory testing`)
