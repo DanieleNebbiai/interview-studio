@@ -250,6 +250,31 @@ export async function buildFFmpegCommandMemorySafe(data: {
     recordingVideoMap[recording.id] = index
   })
 
+  // Calculate video synchronization offsets from recording_started_at
+  const videoSyncOffsets: number[] = []
+
+  // Type-safe access to recording_started_at (might be undefined in type but exists at runtime)
+  const recordingsWithTimestamps = recordings as Array<typeof recordings[0] & { recording_started_at?: string }>
+
+  if (recordings.length > 1 && recordingsWithTimestamps.every(r => r.recording_started_at)) {
+    // Find the earliest recording_started_at timestamp
+    const earliestStart = Math.min(...recordingsWithTimestamps.map(r => new Date(r.recording_started_at!).getTime()))
+
+    recordingsWithTimestamps.forEach((recording, index) => {
+      const recordingStart = new Date(recording.recording_started_at!).getTime()
+      const offsetMs = recordingStart - earliestStart
+      const offsetSeconds = offsetMs / 1000
+      videoSyncOffsets[index] = offsetSeconds
+      console.log(`🕐 Video ${index + 1} sync offset: ${offsetSeconds}s (started at ${recording.recording_started_at})`)
+    })
+  } else {
+    // No synchronization needed - all offsets are 0
+    recordings.forEach((_, index) => {
+      videoSyncOffsets[index] = 0
+    })
+    console.log(`🕐 No sync offsets needed (single video or missing timestamps)`)
+  }
+
   try {
     const tempDir = path.dirname(outputPath)
     const chunkFiles: string[] = []
@@ -291,7 +316,8 @@ export async function buildFFmpegCommandMemorySafe(data: {
         chunkIndex,
         focusSegments,
         settings,
-        recordingVideoMap
+        recordingVideoMap,
+        videoSyncOffsets
       })
 
       chunkFiles.push(chunkOutputPath)
@@ -669,7 +695,7 @@ function createMemorySafeChunks(sections: ExportJobData['videoSections'], maxChu
 }
 
 // Process a single chunk with memory-efficient settings
-async function processChunkMemorySafe(params: { 
+async function processChunkMemorySafe(params: {
   inputVideos: string[]
   outputPath: string
   chunk: { startTime: number; endTime: number; playbackSpeed: number; originalSectionId: string }
@@ -677,8 +703,9 @@ async function processChunkMemorySafe(params: {
   focusSegments: ExportJobData['focusSegments']
   settings: ExportJobData['exportSettings']
   recordingVideoMap: { [key: string]: number }
+  videoSyncOffsets: number[]
 }): Promise<void> {
-  const { inputVideos, outputPath, chunk, chunkIndex, focusSegments, settings, recordingVideoMap } = params
+  const { inputVideos, outputPath, chunk, chunkIndex, focusSegments, settings, recordingVideoMap, videoSyncOffsets } = params
 
   return new Promise((resolve, reject) => {
     const command = ffmpeg()
@@ -689,9 +716,15 @@ async function processChunkMemorySafe(params: {
       .addOption('-filter_threads', '1')    // Single thread for filters
       .addOption('-bufsize', '512k')        // Small buffer size
 
-    // Add input videos
-    inputVideos.forEach(video => {
-      command.addInput(video)
+    // Add input videos with sync offsets
+    inputVideos.forEach((video, index) => {
+      if (videoSyncOffsets[index] > 0) {
+        console.log(`🕐 Applying ${videoSyncOffsets[index]}s sync offset to video ${index + 1}`)
+        command.addInput(video)
+          .addInputOption('-itsoffset', videoSyncOffsets[index].toFixed(3))
+      } else {
+        command.addInput(video)
+      }
     })
 
     const filterComplex: string[] = []
