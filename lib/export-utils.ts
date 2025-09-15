@@ -223,6 +223,15 @@ export function buildFFmpegCommand(data: {
     // Build complex filter for multi-video layout
     const validSections = videoSections.filter(section => !section.isDeleted)
     const filterComplex: string[] = []
+
+    // Calculate expected final duration after speed adjustments
+    const expectedFinalDuration = validSections.reduce((total, section) => {
+      const sectionDuration = section.endTime - section.startTime
+      const adjustedDuration = sectionDuration / section.playbackSpeed
+      console.log(`📏 Section ${section.startTime.toFixed(1)}s-${section.endTime.toFixed(1)}s: ${sectionDuration.toFixed(1)}s at ${section.playbackSpeed}x = ${adjustedDuration.toFixed(1)}s`)
+      return total + adjustedDuration
+    }, 0)
+    console.log(`📐 Expected final video duration: ${expectedFinalDuration.toFixed(1)}s (original: ${validSections.reduce((t, s) => t + (s.endTime - s.startTime), 0).toFixed(1)}s)`)
     
     // Create recording ID to video index mapping (focus segments use recording_id)
     const recordingVideoMap: { [key: string]: number } = {}
@@ -242,7 +251,7 @@ export function buildFFmpegCommand(data: {
     validSections.forEach((section, sectionIndex) => {
       console.log(`📹 Section ${sectionIndex}: ${section.startTime.toFixed(2)}s-${section.endTime.toFixed(2)}s (speed: x${section.playbackSpeed})`)
 
-      // Speed control filters
+      // Speed control filters - use setpts for video and atempo for audio
       const speedFilter = section.playbackSpeed !== 1 ? `,setpts=PTS/${section.playbackSpeed}` : ''
       const audioSpeedFilter = section.playbackSpeed !== 1 ? `,atempo=${section.playbackSpeed}` : ''
 
@@ -276,6 +285,7 @@ export function buildFFmpegCommand(data: {
             )
 
             // Adjust timing relative to section start and account for speed
+            // When using setpts=PTS/speed, the video timeline is compressed by the speed factor
             const relativeStart = Math.max(0, fs.startTime - section.startTime) / section.playbackSpeed
             const relativeEnd = Math.min(section.endTime - section.startTime, fs.endTime - section.startTime) / section.playbackSpeed
 
@@ -409,12 +419,23 @@ export function buildFFmpegCommand(data: {
       .on('start', (commandLine) => {
         console.log('🎬 FFmpeg command:', commandLine)
         console.log('🎬 FFmpeg started processing...')
+        console.log(`🎯 Expected final duration: ${expectedFinalDuration.toFixed(1)}s`)
       })
       .on('progress', (progress) => {
+        // Calculate more accurate percentage based on expected duration
+        let adjustedPercent = progress.percent
+        if (progress.timemark && progress.timemark !== 'N/A') {
+          const currentTime = parseTimemark(progress.timemark)
+          if (currentTime && expectedFinalDuration > 0) {
+            adjustedPercent = Math.min(99.9, (currentTime / expectedFinalDuration) * 100)
+            console.log(`📊 Adjusted progress: ${adjustedPercent.toFixed(1)}% (FFmpeg: ${progress.percent || 'N/A'}%, time: ${progress.timemark})`)
+          }
+        }
+
         console.log('🎬 FFmpeg progress:', JSON.stringify(progress, null, 2))
         // Heartbeat to prevent Railway timeout
-        if (progress.percent) {
-          console.log(`💓 Processing heartbeat: ${progress.percent}%`)
+        if (adjustedPercent) {
+          console.log(`💓 Processing heartbeat: ${adjustedPercent}%`)
         }
       })
       .on('stderr', (stderrLine) => {
@@ -449,10 +470,22 @@ export function buildFFmpegCommand(data: {
   })
 }
 
+// Parse FFmpeg timemark (HH:MM:SS.SS) to seconds
+function parseTimemark(timemark: string): number | null {
+  const match = timemark.match(/(\d+):(\d+):(\d+(?:\.\d+)?)/)
+  if (!match) return null
+
+  const hours = parseInt(match[1])
+  const minutes = parseInt(match[2])
+  const seconds = parseFloat(match[3])
+
+  return hours * 3600 + minutes * 60 + seconds
+}
+
 function getVideoBitrate(quality: string): string {
   switch (quality) {
     case '4k': return '4000k'      // Reduced for Railway
-    case '1080p': return '1000k'   // Reduced for Railway  
+    case '1080p': return '1000k'   // Reduced for Railway
     case '720p': return '500k'     // Reduced for Railway
     default: return '500k'         // Default reduced for Railway
   }
