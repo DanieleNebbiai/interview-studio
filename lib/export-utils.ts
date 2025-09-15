@@ -282,10 +282,28 @@ export async function buildFFmpegCommandMemorySafe(data: {
     }
 
     console.log('🔄 Phase 2: Sequential concatenation of chunks')
-    await concatenateChunksMemorySafe(chunkFiles, outputPath, subtitleFile, settings)
+    const tempConcatenated = outputPath.replace('.mp4', '_temp_concat.mp4')
+    await concatenateChunksMemorySafe(chunkFiles, tempConcatenated)
 
     // Immediate cleanup of chunk files
     await cleanupFiles(chunkFiles, 'chunk')
+
+    // Phase 3: Add subtitles in final pass if needed
+    if (subtitleFile) {
+      console.log('🔄 Phase 3: Adding subtitles in final pass')
+      await addSubtitlesToVideo(tempConcatenated, outputPath, subtitleFile)
+
+      // Cleanup temp concatenated file
+      try {
+        fs.unlinkSync(tempConcatenated)
+        console.log('🧹 Cleaned up temporary concatenated file')
+      } catch (error) {
+        console.warn('⚠️ Failed to cleanup temp file:', error)
+      }
+    } else {
+      // No subtitles needed, just rename temp file
+      fs.renameSync(tempConcatenated, outputPath)
+    }
 
     const finalStats = fs.statSync(outputPath)
     console.log(`✅ Memory-Safe Processing completed: ${Math.round(finalStats.size / 1024)}KB final video`)
@@ -641,9 +659,11 @@ async function processChunkMemorySafe(params: {
 
     if (inputVideos.length === 2) {
       // Memory-efficient 50/50 layout for this chunk
+      // Calculate expected chunk duration after speed adjustment
+      const expectedChunkDuration = chunkDuration / chunk.playbackSpeed
       const speedFilter = chunk.playbackSpeed !== 1 ? `,setpts=PTS/${chunk.playbackSpeed}` : ''
 
-      console.log(`📱 Processing chunk: ${chunkDuration.toFixed(1)}s at ${chunk.playbackSpeed}x speed (memory-limited)`)
+      console.log(`📱 Processing chunk: ${chunkDuration.toFixed(1)}s at ${chunk.playbackSpeed}x speed → ${expectedChunkDuration.toFixed(1)}s output`)
 
       filterComplex.push(
         `[0:v]trim=${chunk.startTime.toFixed(2)}:${chunk.endTime.toFixed(2)},crop=720:720:280:0,scale=640:720,setsar=1/1${speedFilter}[v0_c${chunkIndex}]`,
@@ -694,8 +714,11 @@ async function processChunkMemorySafe(params: {
 
     } else {
       // Single video processing (memory-efficient)
+      const expectedChunkDuration = chunkDuration / chunk.playbackSpeed
       const speedFilter = chunk.playbackSpeed !== 1 ? `,setpts=PTS/${chunk.playbackSpeed}` : ''
       const audioSpeedFilter = chunk.playbackSpeed !== 1 ? `,atempo=${chunk.playbackSpeed}` : ''
+
+      console.log(`📱 Single video chunk: ${chunkDuration.toFixed(1)}s at ${chunk.playbackSpeed}x speed → ${expectedChunkDuration.toFixed(1)}s output`)
 
       filterComplex.push(
         `[0:v]trim=${chunk.startTime.toFixed(2)}:${chunk.endTime.toFixed(2)},scale=1280:720,setsar=1/1${speedFilter}[finalvideo]`,
@@ -742,7 +765,7 @@ async function processChunkMemorySafe(params: {
 }
 
 // Memory-efficient concatenation using file-based approach
-async function concatenateChunksMemorySafe(chunkFiles: string[], outputPath: string, subtitleFile?: string, settings?: any): Promise<void> {
+async function concatenateChunksMemorySafe(chunkFiles: string[], outputPath: string): Promise<void> {
   return new Promise((resolve, reject) => {
     console.log(`🔗 Memory-safe concatenation of ${chunkFiles.length} chunks`)
 
@@ -769,13 +792,14 @@ async function concatenateChunksMemorySafe(chunkFiles: string[], outputPath: str
       .input(concatListPath)
       .inputOptions(['-f', 'concat', '-safe', '0'])
 
-    // Skip subtitles in concatenation phase to save memory
-    // Will add them in a separate final pass if needed
-
+    // Re-encode to ensure speed adjustments are preserved
+    // Use fast settings to minimize processing time
     command
       .format('mp4')
-      .videoCodec('copy')                   // Copy instead of re-encode (much faster)
-      .audioCodec('copy')                   // Copy audio too
+      .videoCodec('libx264')                // Re-encode to preserve speed adjustments
+      .audioCodec('aac')                    // Re-encode audio for consistency
+      .addOption('-preset', 'ultrafast')    // Fast encoding
+      .addOption('-crf', '18')              // Good quality
       .output(outputPath)
 
     command
@@ -814,6 +838,48 @@ async function concatenateChunksMemorySafe(chunkFiles: string[], outputPath: str
           console.warn(`⚠️ Failed to cleanup on error: ${cleanupError}`)
         }
 
+        reject(err)
+      })
+      .run()
+  })
+}
+
+// Add subtitles to video in separate pass (memory-efficient)
+async function addSubtitlesToVideo(inputPath: string, outputPath: string, subtitleFile: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const command = ffmpeg()
+
+    command
+      .input(inputPath)
+      .addOption('-threads', '1')           // Single thread
+      .addOption('-bufsize', '256k')        // Small buffer
+
+    // Add subtitles with styling
+    const subtitlesFilter = `subtitles=${subtitleFile}:force_style='FontName=DejaVu Sans,FontSize=18,PrimaryColour=&Hffffff,OutlineColour=&H000000,Outline=1,Shadow=1'`
+
+    command
+      .videoFilters(subtitlesFilter)
+      .format('mp4')
+      .videoCodec('libx264')
+      .audioCodec('copy')                   // Copy audio (no re-encoding)
+      .addOption('-preset', 'ultrafast')    // Fast encoding
+      .output(outputPath)
+
+    command
+      .on('start', () => {
+        console.log('📝 Adding subtitles to final video')
+      })
+      .on('progress', (progress) => {
+        if (progress.percent) {
+          console.log(`📝 Subtitle progress: ${progress.percent.toFixed(1)}%`)
+        }
+      })
+      .on('end', () => {
+        console.log('✅ Subtitles added successfully')
+        resolve()
+      })
+      .on('error', (err) => {
+        console.error('❌ Failed to add subtitles:', err)
         reject(err)
       })
       .run()
