@@ -236,10 +236,27 @@ async function processExportJob(jobId: string, jobData: ExportJobData) {
       });
 
       console.log("📝 Generating subtitle file...");
+      // Calculate sync offsets for subtitles
+      const videoSyncOffsets: number[] = []
+      if (recordings.length > 1 && recordings.every((r: any) => r.recording_started_at)) {
+        const earliestStart = Math.min(...recordings.map((r: any) => new Date(r.recording_started_at).getTime()))
+        recordings.forEach((recording: any, index: number) => {
+          const recordingStart = new Date(recording.recording_started_at).getTime()
+          const offsetMs = recordingStart - earliestStart
+          const offsetSeconds = offsetMs / 1000
+          videoSyncOffsets[index] = offsetSeconds
+        })
+      } else {
+        recordings.forEach((_: any, index: number) => {
+          videoSyncOffsets[index] = 0
+        })
+      }
+
       subtitleFile = await generateSubtitleFile(
         transcriptions,
         videoSections,
-        jobId
+        jobId,
+        videoSyncOffsets
       );
       console.log(`✅ Generated subtitles: ${subtitleFile}`);
     }

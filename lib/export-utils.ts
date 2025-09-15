@@ -58,7 +58,8 @@ export async function downloadVideo(url: string, filename: string): Promise<stri
 export async function generateSubtitleFile(
   transcriptions: ExportJobData['transcriptions'],
   videoSections: ExportJobData['videoSections'],
-  jobId: string
+  jobId: string,
+  videoSyncOffsets: number[] = []
 ): Promise<string> {
   const subtitlePath = path.join(TEMP_DIR, `${jobId}_subtitles.srt`)
   
@@ -76,17 +77,33 @@ export async function generateSubtitleFile(
   
   transcriptions.forEach((transcription, participantIndex) => {
     if (transcription.word_timestamps?.words) {
+      // Get sync offset for this participant (default 0 if not available)
+      const syncOffset = videoSyncOffsets[participantIndex] || 0
+      console.log(`🎤 Participant ${participantIndex + 1} subtitle sync offset: ${syncOffset}s`)
+
       transcription.word_timestamps.words.forEach((word: { word: string; start: number; end: number }) => {
-        // Check if this word is in a valid (non-deleted) section
-        const isInValidSection = videoSections.some(section => 
-          !section.isDeleted && 
-          word.start >= section.startTime && 
-          word.end <= section.endTime
+        // Apply sync offset to subtitle timestamps (subtract offset to compensate for video delay)
+        const adjustedStart = word.start - syncOffset
+        const adjustedEnd = word.end - syncOffset
+
+        // Skip words that become negative after offset adjustment
+        if (adjustedStart < 0) {
+          console.log(`⚠️ Skipping word "${word.word}" - starts before 0 after sync adjustment`)
+          return
+        }
+
+        // Check if this word is in a valid (non-deleted) section (using adjusted timestamps)
+        const isInValidSection = videoSections.some(section =>
+          !section.isDeleted &&
+          adjustedStart >= section.startTime &&
+          adjustedEnd <= section.endTime
         )
-        
+
         if (isInValidSection) {
           allWords.push({
-            ...word,
+            word: word.word,
+            start: adjustedStart,
+            end: adjustedEnd,
             participantIndex: participantIndex + 1
           })
         }
@@ -715,19 +732,22 @@ async function processChunkMemorySafe(params: {
   return new Promise((resolve, reject) => {
     const command = ffmpeg()
 
-    // Memory-efficient settings
+    // Balanced quality/memory settings
     command
       .addOption('-threads', '2')           // Limit to 2 threads
       .addOption('-filter_threads', '1')    // Single thread for filters
-      .addOption('-bufsize', '512k')        // Small buffer size
+      .addOption('-bufsize', '2M')          // Increased buffer size for better quality
+      .addOption('-maxrate', '2M')          // Higher bitrate for better quality
 
     // Add input videos with sync offsets
     inputVideos.forEach((video, index) => {
-      if (videoSyncOffsets[index] > 0) {
-        console.log(`🕐 Applying ${videoSyncOffsets[index]}s sync offset to video ${index + 1}`)
+      const offset = videoSyncOffsets[index] || 0
+      if (offset > 0) {
+        console.log(`🕐 Applying ${offset}s sync offset to video ${index + 1} in chunk ${chunkIndex}`)
         command.addInput(video)
-          .addInputOption('-itsoffset', videoSyncOffsets[index].toFixed(3))
+          .addInputOption('-itsoffset', offset.toFixed(3))
       } else {
+        console.log(`🕐 No offset for video ${index + 1} in chunk ${chunkIndex} (offset: ${offset}s)`)
         command.addInput(video)
       }
     })
@@ -908,10 +928,10 @@ async function applySpeedToChunk(inputPath: string, outputPath: string, speed: n
       .videoCodec('libx264')
       .audioCodec('aac')
       .addOption('-bsf:v', 'h264_mp4toannexb') // <-- Added bitstream filter for TS compatibility
-      .addOption('-preset', 'ultrafast')
-      .addOption('-crf', '30')            // Low quality to save memory
-      .videoBitrate('100k')               // Very low bitrate
-      .audioBitrate('32k')                // Very low audio bitrate
+      .addOption('-preset', 'medium')     // Better quality than ultrafast
+      .addOption('-crf', '23')            // Higher quality (lower CRF)
+      .videoBitrate('2M')                 // Much higher bitrate
+      .audioBitrate('128k')               // Better audio quality
       .output(outputPath)
 
     command
@@ -1170,7 +1190,8 @@ async function addSubtitlesToVideo(inputPath: string, outputPath: string, subtit
       .format('mp4')
       .videoCodec('libx264')
       .audioCodec('copy')                   // Copy audio (no re-encoding)
-      .addOption('-preset', 'ultrafast')    // Fast encoding
+      .addOption('-preset', 'medium')       // Better quality for subtitle overlay
+      .addOption('-crf', '20')              // High quality for final output
       .output(outputPath)
 
     command
