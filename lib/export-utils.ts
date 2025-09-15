@@ -199,7 +199,88 @@ function formatSRTTime(seconds: number): string {
   return `${hours.toString().padStart(2, '0')}:${minutes.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')},${ms.toString().padStart(3, '0')}`
 }
 
-// Build FFmpeg command for multi-video export
+// Two-Pass Processing: Process each section separately, then concatenate
+export async function buildFFmpegCommandTwoPass(data: {
+  inputVideos: string[]
+  outputPath: string
+  videoSections: ExportJobData['videoSections']
+  focusSegments: ExportJobData['focusSegments']
+  subtitleFile?: string
+  settings: ExportJobData['exportSettings']
+  recordings: ExportJobData['recordings']
+}): Promise<string> {
+  const { inputVideos, outputPath, videoSections, focusSegments, subtitleFile, settings, recordings } = data
+  const validSections = videoSections.filter(section => !section.isDeleted)
+
+  // Calculate expected final duration after speed adjustments
+  const expectedFinalDuration = validSections.reduce((total, section) => {
+    const sectionDuration = section.endTime - section.startTime
+    const adjustedDuration = sectionDuration / section.playbackSpeed
+    console.log(`📏 Section ${section.startTime.toFixed(1)}s-${section.endTime.toFixed(1)}s: ${sectionDuration.toFixed(1)}s at ${section.playbackSpeed}x = ${adjustedDuration.toFixed(1)}s`)
+    return total + adjustedDuration
+  }, 0)
+  console.log(`📐 Expected final video duration: ${expectedFinalDuration.toFixed(1)}s (original: ${validSections.reduce((t, s) => t + (s.endTime - s.startTime), 0).toFixed(1)}s)`)
+
+  console.log('🔄 Using Two-Pass Processing approach for accurate speed control')
+
+  // Create recording ID to video index mapping
+  const recordingVideoMap: { [key: string]: number } = {}
+  recordings.forEach((recording, index) => {
+    recordingVideoMap[recording.id] = index
+  })
+
+  try {
+    const tempDir = path.dirname(outputPath)
+    const sectionFiles: string[] = []
+
+    // Pass 1: Process each section separately
+    for (let sectionIndex = 0; sectionIndex < validSections.length; sectionIndex++) {
+      const section = validSections[sectionIndex]
+      const sectionOutputPath = path.join(tempDir, `section_${sectionIndex}_${Date.now()}.mp4`)
+
+      console.log(`🔄 Pass 1 - Processing section ${sectionIndex}: ${section.startTime.toFixed(2)}s-${section.endTime.toFixed(2)}s (speed: x${section.playbackSpeed})`)
+
+      await processSectionSeparately({
+        inputVideos,
+        outputPath: sectionOutputPath,
+        section,
+        sectionIndex,
+        focusSegments,
+        settings,
+        recordings,
+        recordingVideoMap
+      })
+
+      sectionFiles.push(sectionOutputPath)
+      console.log(`✅ Section ${sectionIndex} processed: ${sectionOutputPath}`)
+    }
+
+    // Pass 2: Concatenate all sections
+    console.log('🔄 Pass 2 - Concatenating processed sections')
+    await concatenateSections(sectionFiles, outputPath, subtitleFile, settings)
+
+    // Cleanup section files
+    sectionFiles.forEach(file => {
+      try {
+        if (fs.existsSync(file)) {
+          fs.unlinkSync(file)
+          console.log(`🧹 Cleaned up section file: ${file}`)
+        }
+      } catch (error) {
+        console.error(`⚠️ Failed to cleanup section file ${file}:`, error)
+      }
+    })
+
+    console.log('✅ Two-Pass Processing completed successfully')
+    return outputPath
+
+  } catch (error) {
+    console.error('❌ Two-Pass Processing failed:', error)
+    throw error
+  }
+}
+
+// Build FFmpeg command for multi-video export (Legacy - kept for fallback)
 export function buildFFmpegCommand(data: {
   inputVideos: string[]
   outputPath: string
@@ -466,6 +547,185 @@ export function buildFFmpegCommand(data: {
       .on('error', (err) => {
         console.error('❌ FFmpeg error:', err)
         console.error('❌ FFmpeg process failed with error:', err.message)
+        reject(err)
+      })
+      .run()
+  })
+}
+
+// Process a single section with proper speed control
+async function processSectionSeparately(params: {
+  inputVideos: string[]
+  outputPath: string
+  section: ExportJobData['videoSections'][0]
+  sectionIndex: number
+  focusSegments: ExportJobData['focusSegments']
+  settings: ExportJobData['exportSettings']
+  recordings: ExportJobData['recordings']
+  recordingVideoMap: { [key: string]: number }
+}): Promise<void> {
+  const { inputVideos, outputPath, section, sectionIndex, focusSegments, settings, recordings, recordingVideoMap } = params
+
+  return new Promise((resolve, reject) => {
+    const command = ffmpeg()
+
+    // Add input videos
+    inputVideos.forEach(video => {
+      command.addInput(video)
+    })
+
+    const filterComplex: string[] = []
+
+    if (inputVideos.length === 2) {
+      // Create base 50/50 layout for this section
+      const sectionDuration = section.endTime - section.startTime
+      const speedFilter = section.playbackSpeed !== 1 ? `,setpts=PTS/${section.playbackSpeed}` : ''
+
+      console.log(`📱 Processing section ${sectionIndex}: ${sectionDuration.toFixed(1)}s at ${section.playbackSpeed}x speed`)
+
+      filterComplex.push(
+        `[0:v]trim=${section.startTime.toFixed(2)}:${section.endTime.toFixed(2)},crop=720:720:280:0,scale=640:720,setsar=1/1${speedFilter}[v0_s${sectionIndex}]`,
+        `[1:v]trim=${section.startTime.toFixed(2)}:${section.endTime.toFixed(2)},crop=720:720:280:0,scale=640:720,setsar=1/1${speedFilter}[v1_s${sectionIndex}]`,
+        `[v0_s${sectionIndex}][v1_s${sectionIndex}]hstack[base_video_s${sectionIndex}]`
+      )
+
+      let currentVideoStream = `[base_video_s${sectionIndex}]`
+
+      // Apply focus overlays for this section
+      const sectionFocusSegments = focusSegments.filter(fs =>
+        fs.startTime >= section.startTime && fs.endTime <= section.endTime
+      )
+
+      sectionFocusSegments.forEach((fs, fsIndex) => {
+        if (fs.focusedParticipantId && recordingVideoMap[fs.focusedParticipantId] !== undefined) {
+          const videoIndex = recordingVideoMap[fs.focusedParticipantId]
+          const overlayName = `overlay_s${sectionIndex}_${fsIndex}`
+          const fullStreamName = `full${videoIndex}_s${sectionIndex}_${fsIndex}`
+
+          // Create individual full-screen stream
+          filterComplex.push(
+            `[${videoIndex}:v]trim=${section.startTime.toFixed(2)}:${section.endTime.toFixed(2)},scale=1280:720,setsar=1/1${speedFilter}[${fullStreamName}]`
+          )
+
+          // Adjust timing relative to section start
+          const relativeStart = Math.max(0, fs.startTime - section.startTime) / section.playbackSpeed
+          const relativeEnd = Math.min(section.endTime - section.startTime, fs.endTime - section.startTime) / section.playbackSpeed
+
+          const enableExpr = `'between(t,${relativeStart.toFixed(2)},${relativeEnd.toFixed(2)})'`
+          filterComplex.push(
+            `${currentVideoStream}[${fullStreamName}]overlay=enable=${enableExpr}[${overlayName}]`
+          )
+
+          currentVideoStream = `[${overlayName}]`
+        }
+      })
+
+      // Final video stream for this section
+      filterComplex.push(`${currentVideoStream}null[finalvideo]`)
+
+      // Audio mixing with speed control
+      const audioSpeedFilter = section.playbackSpeed !== 1 ? `,atempo=${section.playbackSpeed}` : ''
+      filterComplex.push(
+        `[0:a]atrim=${section.startTime.toFixed(2)}:${section.endTime.toFixed(2)}${audioSpeedFilter}[a0_s${sectionIndex}]`,
+        `[1:a]atrim=${section.startTime.toFixed(2)}:${section.endTime.toFixed(2)}${audioSpeedFilter}[a1_s${sectionIndex}]`,
+        `[a0_s${sectionIndex}][a1_s${sectionIndex}]amix=inputs=2[finalaudio]`
+      )
+
+    } else {
+      // Single video processing
+      const speedFilter = section.playbackSpeed !== 1 ? `,setpts=PTS/${section.playbackSpeed}` : ''
+      const audioSpeedFilter = section.playbackSpeed !== 1 ? `,atempo=${section.playbackSpeed}` : ''
+
+      filterComplex.push(
+        `[0:v]trim=${section.startTime.toFixed(2)}:${section.endTime.toFixed(2)},scale=1280:720,setsar=1/1${speedFilter}[finalvideo]`,
+        `[0:a]atrim=${section.startTime.toFixed(2)}:${section.endTime.toFixed(2)}${audioSpeedFilter}[finalaudio]`
+      )
+    }
+
+    // Apply filters
+    command.complexFilter(filterComplex)
+    command.map('[finalvideo]').map('[finalaudio]')
+
+    // Output settings
+    command
+      .format('mp4')
+      .videoCodec('libx264')
+      .audioCodec('aac')
+      .videoBitrate(getVideoBitrate(settings.quality))
+      .audioBitrate('128k')
+      .fps(settings.framerate)
+      .addOption('-preset', 'ultrafast')
+      .addOption('-profile:v', 'high')
+      .addOption('-level', '4.0')
+      .addOption('-pix_fmt', 'yuv420p')
+      .output(outputPath)
+
+    command
+      .on('start', (commandLine) => {
+        console.log(`🎬 Section ${sectionIndex} FFmpeg command:`, commandLine.substring(0, 200) + '...')
+      })
+      .on('end', () => {
+        console.log(`✅ Section ${sectionIndex} processing completed`)
+        resolve()
+      })
+      .on('error', (err) => {
+        console.error(`❌ Section ${sectionIndex} processing failed:`, err)
+        reject(err)
+      })
+      .run()
+  })
+}
+
+// Concatenate processed sections
+async function concatenateSections(sectionFiles: string[], outputPath: string, subtitleFile?: string, settings?: any): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const command = ffmpeg()
+
+    // Add all section files as inputs
+    sectionFiles.forEach(file => {
+      command.addInput(file)
+    })
+
+    // Create concat filter
+    const inputs = sectionFiles.map((_, index) => `[${index}:v][${index}:a]`).join('')
+    const concatFilter = `${inputs}concat=n=${sectionFiles.length}:v=1:a=1[outv][outa]`
+
+    let finalVideoStream = '[outv]'
+    const finalAudioStream = '[outa]'
+
+    const filterComplex = [concatFilter]
+
+    // Add subtitles if provided
+    if (subtitleFile) {
+      console.log(`📝 Adding subtitles to final concatenated video: ${subtitleFile}`)
+      const subtitlesFilter = `subtitles=${subtitleFile}:force_style='FontName=DejaVu Sans,FontSize=18,PrimaryColour=&Hffffff,OutlineColour=&H000000,Outline=1,Shadow=1'`
+      filterComplex.push(`[outv]${subtitlesFilter}[outv_sub]`)
+      finalVideoStream = '[outv_sub]'
+    }
+
+    command.complexFilter(filterComplex)
+    command.map(finalVideoStream).map(finalAudioStream)
+
+    command
+      .format('mp4')
+      .videoCodec('libx264')
+      .audioCodec('aac')
+      .addOption('-preset', 'ultrafast')
+      .addOption('-profile:v', 'high')
+      .addOption('-level', '4.0')
+      .addOption('-pix_fmt', 'yuv420p')
+      .output(outputPath)
+
+    command
+      .on('start', (commandLine) => {
+        console.log('🎬 Concatenation FFmpeg command:', commandLine.substring(0, 200) + '...')
+      })
+      .on('end', () => {
+        console.log('✅ Section concatenation completed')
+        resolve()
+      })
+      .on('error', (err) => {
+        console.error('❌ Section concatenation failed:', err)
         reject(err)
       })
       .run()

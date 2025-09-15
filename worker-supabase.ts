@@ -7,7 +7,7 @@ import {
 import {
   downloadVideo,
   generateSubtitleFile,
-  buildFFmpegCommand,
+  buildFFmpegCommandTwoPass,
   uploadToS3,
   cleanupTempFiles,
 } from "./lib/export-utils";
@@ -270,7 +270,8 @@ async function processExportJob(jobId: string, jobData: ExportJobData) {
     }, 5000); // Every 5 seconds during FFmpeg
 
     try {
-      await buildFFmpegCommand({
+      // Use Two-Pass Processing for accurate speed control
+      await buildFFmpegCommandTwoPass({
         inputVideos: localVideos,
         outputPath,
         videoSections,
