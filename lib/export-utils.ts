@@ -253,6 +253,14 @@ export async function buildFFmpegCommandMemorySafe(data: {
   // Calculate video synchronization offsets from recording_started_at
   const videoSyncOffsets: number[] = []
 
+  // DEBUG: Check what recording data we have
+  console.log(`🔍 Recordings count: ${recordings.length}`)
+  console.log('🔍 Recordings data for sync:', recordings.map(r => ({
+    id: r.id,
+    participant_id: r.participant_id,
+    recording_started_at: (r as any).recording_started_at || 'MISSING'
+  })))
+
   // Type-safe access to recording_started_at (might be undefined in type but exists at runtime)
   const recordingsWithTimestamps = recordings as Array<typeof recordings[0] & { recording_started_at?: string }>
 
