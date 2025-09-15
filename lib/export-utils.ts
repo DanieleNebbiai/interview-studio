@@ -769,36 +769,44 @@ async function processChunkMemorySafe(params: {
   })
 }
 
-// Memory-efficient concatenation using file-based approach
+// Memory-efficient concatenation using file-based approach with re-encoding
 async function concatenateChunksMemorySafe(chunkFiles: string[], outputPath: string): Promise<void> {
   return new Promise((resolve, reject) => {
-    console.log(`🔗 Memory-safe filter-based concatenation of ${chunkFiles.length} chunks`)
+    console.log(`🔗 Memory-safe file-based concatenation of ${chunkFiles.length} chunks (with re-encoding)`)
+
+    const concatListPath = outputPath.replace('.mp4', '_concat.txt')
+    const concatContent = chunkFiles.map(file => `file '${file}'`).join('\n')
+
+    try {
+      fs.writeFileSync(concatListPath, concatContent, 'utf8')
+      console.log(`📝 Created concat list: ${concatListPath}`)
+    } catch (error) {
+      reject(new Error(`Failed to create concat list: ${error}`))
+      return
+    }
 
     const command = ffmpeg()
 
-    // Memory-efficient settings
+    // Ultra memory-efficient settings for concatenation
     command
-      .addOption('-threads', '1')           // Single thread for concatenation
+      .addOption('-threads', '1')           // Single thread
+      .addOption('-bufsize', '128k')        // Very small buffer
+      .addOption('-maxrate', '500k')        // Limit bitrate to reduce memory
 
-    // Add each chunk as separate input for filter-based concatenation
-    chunkFiles.forEach(file => {
-      command.addInput(file)
-    })
+    // Use concat demuxer but with RE-ENCODING to preserve speed adjustments
+    command
+      .input(concatListPath)
+      .inputOptions(['-f', 'concat', '-safe', '0'])
 
-    // Use filter-based concatenation to preserve timing
-    const inputs = chunkFiles.map((_, index) => `[${index}:v][${index}:a]`).join('')
-    const concatFilter = `${inputs}concat=n=${chunkFiles.length}:v=1:a=1[outv][outa]`
-
-    command.complexFilter([concatFilter])
-    command.map('[outv]').map('[outa]')
-
-    // Re-encode to ensure proper timing
+    // Force re-encoding with minimal settings to preserve duration
     command
       .format('mp4')
-      .videoCodec('libx264')                // Re-encode to preserve timing
-      .audioCodec('aac')                    // Re-encode audio for consistency
-      .addOption('-preset', 'ultrafast')    // Fast encoding
-      .addOption('-crf', '18')              // Good quality
+      .videoCodec('libx264')                // Re-encode (not copy)
+      .audioCodec('aac')                    // Re-encode audio
+      .addOption('-preset', 'ultrafast')    // Fastest encoding
+      .addOption('-crf', '28')              // Lower quality to save memory
+      .videoBitrate('200k')                 // Very low bitrate
+      .audioBitrate('64k')                  // Low audio bitrate
       .output(outputPath)
 
     command
@@ -811,11 +819,32 @@ async function concatenateChunksMemorySafe(chunkFiles: string[], outputPath: str
         }
       })
       .on('end', () => {
-        console.log('✅ Memory-safe filter-based concatenation completed')
+        console.log('✅ Memory-safe file-based concatenation completed')
+
+        // Cleanup concat list
+        try {
+          if (fs.existsSync(concatListPath)) {
+            fs.unlinkSync(concatListPath)
+            console.log(`🧹 Cleaned up concat list`)
+          }
+        } catch (error) {
+          console.warn(`⚠️ Failed to cleanup concat list: ${error}`)
+        }
+
         resolve()
       })
       .on('error', (err) => {
         console.error('❌ Memory-safe concatenation failed:', err)
+
+        // Cleanup on error
+        try {
+          if (fs.existsSync(concatListPath)) {
+            fs.unlinkSync(concatListPath)
+          }
+        } catch (cleanupError) {
+          console.warn(`⚠️ Failed to cleanup on error: ${cleanupError}`)
+        }
+
         reject(err)
       })
       .run()
