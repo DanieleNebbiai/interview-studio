@@ -909,12 +909,12 @@ async function applySpeedToChunk(inputPath: string, outputPath: string, speed: n
   return new Promise((resolve, reject) => {
     const command = ffmpeg()
 
-    // Ultra memory-efficient settings
+    // Balanced quality/memory settings for speed adjustment
     command
       .input(inputPath)
       .addOption('-threads', '1')
-      .addOption('-bufsize', '64k')       // Very small buffer
-      .addOption('-maxrate', '100k')      // Very low bitrate
+      .addOption('-bufsize', '2M')        // Increased buffer size
+      .addOption('-maxrate', '2M')        // Higher bitrate
 
     if (speed !== 1) {
       // Apply speed adjustment with basic filters (no complex filter)
