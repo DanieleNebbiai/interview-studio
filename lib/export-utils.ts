@@ -329,7 +329,7 @@ export function buildFFmpegCommand(data: {
   return new Promise((resolve, reject) => {
     const { inputVideos, outputPath, videoSections, focusSegments, subtitleFile, settings, recordings } = data
     
-    const command = ffmpeg()
+    const command = ffmpeg() 
     
     // Add input videos
     inputVideos.forEach(video => {
@@ -385,7 +385,7 @@ export function buildFFmpegCommand(data: {
         let currentVideoStream = `[base_video_s${sectionIndex}]`
 
         // Apply focus overlays for this section (filter focus segments by section timing)
-        const sectionFocusSegments = focusSegments.filter(fs =>
+        const sectionFocusSegments = focusSegments.filter(fs => 
           fs.startTime >= section.startTime && fs.endTime <= section.endTime
         )
 
@@ -671,7 +671,7 @@ async function processChunkMemorySafe(params: {
       let currentVideoStream = `[base_video_c${chunkIndex}]`
 
       // Apply focus overlays for this chunk (simplified to reduce memory)
-      const chunkFocusSegments = focusSegments.filter(fs =>
+      const chunkFocusSegments = focusSegments.filter(fs => 
         fs.startTime < chunk.endTime && fs.endTime > chunk.startTime // Intersects with chunk
       )
 
@@ -704,7 +704,7 @@ async function processChunkMemorySafe(params: {
         }
       }
 
-      filterComplex.push(`${currentVideoStream}null[finalvideo]`)
+      filterComplex.push(`${currentVideoStream}null[finalvideo]`) 
 
       // Audio without speed adjustment (will be applied during concatenation)
       filterComplex.push(
@@ -764,7 +764,7 @@ async function processChunkMemorySafe(params: {
 // Ultra-simple sequential concatenation - no complex filters, just basic re-encoding
 async function simpleSequentialConcat(
   chunkFiles: string[],
-  chunks: Array<{ startTime: number; endTime: number; playbackSpeed: number; originalSectionId: string }>,
+  chunks: Array<{ startTime: number; endTime: number; playbackSpeed: number; originalSectionId: string }>, 
   outputPath: string
 ): Promise<void> {
   console.log('🔗 Ultra-simple sequential concatenation (Railway-safe)')
@@ -866,8 +866,9 @@ async function simpleFileConcatenation(chunkFiles: string[], outputPath: string)
       .addOption('-threads', '1')
       .addOption('-bufsize', '64k')
       .format('mp4')
-      .videoCodec('copy')                 // Copy - no re-encoding
-      .audioCodec('copy')                 // Copy audio
+      .videoCodec('libx264')              // Re-encode to fix timestamps
+      .audioCodec('aac')                  // Re-encode audio
+      .addOption('-preset', 'ultrafast')    // Ensure it's fast
       .output(outputPath)
 
     command
@@ -905,7 +906,7 @@ async function simpleFileConcatenation(chunkFiles: string[], outputPath: string)
 // Memory-efficient concatenation with speed adjustment applied during concat phase
 async function concatenateChunksWithSpeed(
   chunkFiles: string[],
-  chunks: Array<{ startTime: number; endTime: number; playbackSpeed: number; originalSectionId: string }>,
+  chunks: Array<{ startTime: number; endTime: number; playbackSpeed: number; originalSectionId: string }>, 
   outputPath: string
 ): Promise<void> {
   return new Promise((resolve, reject) => {
@@ -1173,7 +1174,7 @@ async function processSectionSeparately(params: {
       let currentVideoStream = `[base_video_s${sectionIndex}]`
 
       // Apply focus overlays for this section
-      const sectionFocusSegments = focusSegments.filter(fs =>
+      const sectionFocusSegments = focusSegments.filter(fs => 
         fs.startTime >= section.startTime && fs.endTime <= section.endTime
       )
 
