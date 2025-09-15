@@ -256,6 +256,17 @@ export async function buildFFmpegCommandMemorySafe(data: {
 
     console.log('🔄 Phase 1: Breaking sections into memory-safe chunks')
 
+    // DEBUG: Log input video durations and sections first
+    console.log(`🎥 Input video durations:`)
+    for (let i = 0; i < inputVideos.length; i++) {
+      await logVideoProperties(inputVideos[i], `Input video ${i + 1}`)
+    }
+
+    console.log(`📋 Video sections to process:`)
+    validSections.forEach((section, index) => {
+      console.log(`   Section ${index + 1}: ${section.startTime}s → ${section.endTime}s (${(section.endTime - section.startTime).toFixed(2)}s) @ ${section.playbackSpeed}x speed`)
+    })
+
     // Break large sections into smaller chunks
     const chunks = createMemorySafeChunks(validSections, CHUNK_MAX_DURATION)
     console.log(`📦 Created ${chunks.length} chunks (max ${CHUNK_MAX_DURATION}s each)`)
@@ -648,6 +659,12 @@ function createMemorySafeChunks(sections: ExportJobData['videoSections'], maxChu
     }
   }
 
+  // DEBUG: Print detailed chunk information
+  console.log(`📦 Created ${chunks.length} memory-safe chunks`)
+  chunks.forEach((chunk, index) => {
+    console.log(`🔍 Chunk ${index + 1}: ${chunk.startTime}s → ${chunk.endTime}s (${(chunk.endTime - chunk.startTime).toFixed(2)}s) @ ${chunk.playbackSpeed}x speed, section=${chunk.originalSectionId}`)
+  })
+
   return chunks
 }
 
@@ -684,12 +701,16 @@ async function processChunkMemorySafe(params: {
       // Memory-efficient 50/50 layout for this chunk
       // DON'T apply speed here - just process the raw segment
       console.log(`📱 Processing chunk: ${chunkDuration.toFixed(1)}s (speed will be applied during concatenation)`)
-      console.log(`🔧 Using trim with duration: start=${chunk.startTime.toFixed(2)}s, duration=${chunkDuration.toFixed(2)}s`)
+      console.log(`🔧 TRIM TEST: start=${chunk.startTime.toFixed(2)}s, duration=${chunkDuration.toFixed(2)}s`)
 
+      // TEST: Apply trim to both video and audio streams
       filterComplex.push(
-        `[0:v]trim=start=${chunk.startTime.toFixed(2)}:duration=${chunkDuration.toFixed(2)},crop=720:720:280:0,scale=640:720,setsar=1/1[v0_c${chunkIndex}]`,
-        `[1:v]trim=start=${chunk.startTime.toFixed(2)}:duration=${chunkDuration.toFixed(2)},crop=720:720:280:0,scale=640:720,setsar=1/1[v1_c${chunkIndex}]`,
-        `[v0_c${chunkIndex}][v1_c${chunkIndex}]hstack[base_video_c${chunkIndex}]`
+        `[0:v]trim=start=${chunk.startTime.toFixed(2)}:duration=${chunkDuration.toFixed(2)},setpts=PTS-STARTPTS,crop=720:720:280:0,scale=640:720,setsar=1/1[v0_c${chunkIndex}]`,
+        `[1:v]trim=start=${chunk.startTime.toFixed(2)}:duration=${chunkDuration.toFixed(2)},setpts=PTS-STARTPTS,crop=720:720:280:0,scale=640:720,setsar=1/1[v1_c${chunkIndex}]`,
+        `[0:a]atrim=start=${chunk.startTime.toFixed(2)}:duration=${chunkDuration.toFixed(2)},asetpts=PTS-STARTPTS[a0_c${chunkIndex}]`,
+        `[1:a]atrim=start=${chunk.startTime.toFixed(2)}:duration=${chunkDuration.toFixed(2)},asetpts=PTS-STARTPTS[a1_c${chunkIndex}]`,
+        `[v0_c${chunkIndex}][v1_c${chunkIndex}]hstack[base_video_c${chunkIndex}]`,
+        `[a0_c${chunkIndex}][a1_c${chunkIndex}]amix=inputs=2[audio_c${chunkIndex}]`
       )
 
       let currentVideoStream = `[base_video_c${chunkIndex}]`
@@ -728,14 +749,9 @@ async function processChunkMemorySafe(params: {
         }
       }
 
-      filterComplex.push(`${currentVideoStream}null[finalvideo]`) 
-
-      // Audio without speed adjustment (will be applied during concatenation)
-      filterComplex.push(
-        `[0:a]atrim=start=${chunk.startTime.toFixed(2)}:duration=${chunkDuration.toFixed(2)}[a0_c${chunkIndex}]`,
-        `[1:a]atrim=start=${chunk.startTime.toFixed(2)}:duration=${chunkDuration.toFixed(2)}[a1_c${chunkIndex}]`,
-        `[a0_c${chunkIndex}][a1_c${chunkIndex}]amix=inputs=2[finalaudio]`
-      )
+      filterComplex.push(`${currentVideoStream}null[finalvideo]`)
+      // Audio is already processed above as [audio_c${chunkIndex}]
+      filterComplex.push(`[audio_c${chunkIndex}]anull[finalaudio]`)
 
     } else {
       // Single video processing (memory-efficient)
