@@ -92,13 +92,26 @@
 
 ---
 
-### 🔄 ATTEMPT 8: Speed-During-Concatenation (CURRENT)
+### ❌ ATTEMPT 8: Speed-During-Concatenation (SIGKILL)
 **Method**:
 - Process chunks WITHOUT speed adjustments (just raw segments)
 - Apply speed adjustments DURING concatenation phase
 - Use complex filter to apply setpts/atempo during concat
 - Memory-efficient: single thread, small buffers
-**Logic**: Speed adjustment should happen in concatenation, not in chunks
+**Result**: SIGKILL during concatenation phase again
+**Issue**: Any complex filter (even with small buffers) causes memory spike on Railway
+**Note**: ✅ Chunks process fine (113MB), ❌ Complex filter concatenation fails
+
+---
+
+### 🔄 ATTEMPT 9: Ultra-Simple Sequential Processing (CURRENT)
+**Method**:
+- Process raw chunks (no speed adjustment)
+- Apply speed to each chunk individually (one at a time) using basic filters
+- Simple file-based concatenation with copy codecs
+- Ultra-low settings: 64k buffer, 100k bitrate, CRF 30
+**Logic**: Avoid all complex filters, use only basic videoFilters/audioFilters
+**Pipeline**: Raw chunks → Individual speed adjustment → Simple concat → Subtitles
 **Status**: Testing in progress
 
 ---
