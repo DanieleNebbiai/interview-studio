@@ -54,6 +54,34 @@ export async function downloadVideo(url: string, filename: string): Promise<stri
   }
 }
 
+// Convert original timestamp to final video timestamp (accounting for deleted sections)
+function convertTimestampToFinalVideo(originalTime: number, videoSections: ExportJobData['videoSections']): number | null {
+  const validSections = videoSections.filter(s => !s.isDeleted).sort((a, b) => a.startTime - b.startTime)
+
+  let finalTime = 0
+
+  for (const section of validSections) {
+    if (originalTime >= section.startTime && originalTime <= section.endTime) {
+      // Time is within this section, calculate final position
+      const offsetInSection = originalTime - section.startTime
+      const adjustedOffset = offsetInSection / section.playbackSpeed // Account for speed changes
+      return finalTime + adjustedOffset
+    }
+
+    if (originalTime < section.startTime) {
+      // Time is before this section, it was probably deleted
+      return null
+    }
+
+    // Add this section's duration to final time (adjusted for playback speed)
+    const sectionDuration = (section.endTime - section.startTime) / section.playbackSpeed
+    finalTime += sectionDuration
+  }
+
+  // Time is after all sections
+  return null
+}
+
 // Generate subtitle file from transcriptions
 export async function generateSubtitleFile(
   transcriptions: ExportJobData['transcriptions'],
@@ -62,13 +90,15 @@ export async function generateSubtitleFile(
   videoSyncOffsets: number[] = []
 ): Promise<string> {
   const subtitlePath = path.join(TEMP_DIR, `${jobId}_subtitles.srt`)
-  
+
   // Create SRT subtitle format (more compatible than ASS)
   let srtContent = ''
   let subtitleIndex = 1
-  
+
+  console.log('🎬 Converting subtitle timestamps to final video timeline (accounting for deleted sections and speed changes)')
+
   // Collect all words from all participants with timing
-  const allWords: Array<{ 
+  const allWords: Array<{
     word: string
     start: number
     end: number
@@ -83,29 +113,29 @@ export async function generateSubtitleFile(
 
       transcription.word_timestamps.words.forEach((word: { word: string; start: number; end: number }) => {
         // Apply sync offset to subtitle timestamps (add offset to sync with delayed video)
-        const adjustedStart = word.start + syncOffset
-        const adjustedEnd = word.end + syncOffset
+        const originalStart = word.start + syncOffset
+        const originalEnd = word.end + syncOffset
 
         // Skip words that become negative after offset adjustment
-        if (adjustedStart < 0) {
+        if (originalStart < 0) {
           console.log(`⚠️ Skipping word "${word.word}" - starts before 0 after sync adjustment`)
           return
         }
 
-        // Check if this word is in a valid (non-deleted) section (using adjusted timestamps)
-        const isInValidSection = videoSections.some(section =>
-          !section.isDeleted &&
-          adjustedStart >= section.startTime &&
-          adjustedEnd <= section.endTime
-        )
+        // Convert original timestamps to final video timeline (accounting for deleted sections and speed)
+        const finalStart = convertTimestampToFinalVideo(originalStart, videoSections)
+        const finalEnd = convertTimestampToFinalVideo(originalEnd, videoSections)
 
-        if (isInValidSection) {
+        // Only include words that have valid final timestamps (not in deleted sections)
+        if (finalStart !== null && finalEnd !== null && finalStart >= 0 && finalEnd > finalStart) {
           allWords.push({
             word: word.word,
-            start: adjustedStart,
-            end: adjustedEnd,
+            start: finalStart,
+            end: finalEnd,
             participantIndex: participantIndex + 1
           })
+        } else {
+          console.log(`🗑️ Skipping word "${word.word}" - in deleted section or invalid timing`)
         }
       })
     }

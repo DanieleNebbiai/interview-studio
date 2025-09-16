@@ -63,7 +63,7 @@
 
   - [ ] Processing video con sezioni eliminate
   - [x] Applicazione modifiche velocità riproduzione
-  - [ ] Gestione focus switching nel video finale
+  - [x] Gestione focus switching nel video finale
   - [x] Merge multiple recording streams
 
 - [ ] **Download diretto del video editato**
