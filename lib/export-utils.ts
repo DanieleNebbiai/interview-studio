@@ -260,12 +260,12 @@ export async function buildFFmpegCommandMemorySafe(data: {
   const CHUNK_MAX_DURATION = 10 // Max 10 seconds per chunk to limit memory
   const GC_DELAY = 2000 // 2s pause between chunks for garbage collection
 
-  // Create participant ID to video index mapping (for focus system)
+  // Create recording ID to video index mapping (for focus system)
   const recordingVideoMap: { [key: string]: number } = {}
   recordings.forEach((recording, index) => {
-    recordingVideoMap[recording.participant_id] = index
+    recordingVideoMap[recording.id] = index
   })
-  console.log('👥 Participant to video mapping:', recordingVideoMap)
+  console.log('👥 Recording ID to video mapping:', recordingVideoMap)
 
   // Calculate video synchronization offsets from recording_started_at
   const videoSyncOffsets: number[] = []
@@ -429,12 +429,12 @@ export function buildFFmpegCommand(data: {
     }, 0)
     console.log(`📐 Expected final video duration: ${expectedFinalDuration.toFixed(1)}s (original: ${validSections.reduce((t, s) => t + (s.endTime - s.startTime), 0).toFixed(1)}s)`)
     
-    // Create participant ID to video index mapping (for focus system)
+    // Create recording ID to video index mapping (for focus system)
     const recordingVideoMap: { [key: string]: number } = {}
     recordings.forEach((recording, index) => {
-      recordingVideoMap[recording.participant_id] = index
+      recordingVideoMap[recording.id] = index
     })
-    console.log('👥 Participant to video mapping:', recordingVideoMap)
+    console.log('👥 Recording ID to video mapping:', recordingVideoMap)
     
     // OVERLAY-BASED FOCUS: Base 50/50 with dynamic full-screen overlays - MULTI-SECTION SUPPORT
     console.log(`📹 Processing ${validSections.length} sections with OVERLAY-BASED FOCUS`)
