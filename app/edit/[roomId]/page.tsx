@@ -10,6 +10,8 @@ import {
   VolumeX,
   ArrowLeft,
   Download,
+  CheckCircle,
+  Link,
 } from "lucide-react";
 import { useVideoExport, ExportSettings } from "@/hooks/useVideoExport";
 import { useEditSave } from "@/hooks/useEditSave";
@@ -94,9 +96,25 @@ export default function EditPage() {
     useEditSave();
 
   // Export system
-  const { exportStatus, isExporting, startExport, cancelExport, resetExport } =
+  const { exportStatus, isExporting, startExport, cancelExport, resetExport, downloadVideo, copyDownloadLink } =
     useVideoExport();
   const [showExportModal, setShowExportModal] = useState(false);
+  const [linkCopied, setLinkCopied] = useState(false);
+
+  // Debug logging for export status
+  useEffect(() => {
+    console.log('🔍 Export Status Debug:', {
+      stage: exportStatus.stage,
+      stageCheck: exportStatus.stage === "completed",
+      downloadUrl: exportStatus.downloadUrl,
+      downloadUrlCheck: !!exportStatus.downloadUrl,
+      jobId: exportStatus.jobId,
+      isExporting,
+      showExportModal,
+      shouldShowDownload: exportStatus.stage === "completed" && exportStatus.downloadUrl,
+      fullCondition: exportStatus.stage === "completed" && exportStatus.downloadUrl && showExportModal
+    });
+  }, [exportStatus, isExporting, showExportModal]);
 
   // Split point interaction states
   const [isDraggingSplit, setIsDraggingSplit] = useState(false);
@@ -1887,49 +1905,97 @@ export default function EditPage() {
               </button>
             </div>
 
-            {isExporting ? (
+            {isExporting || exportStatus.stage === 'completed' ? (
               // Export Progress
               <div className="space-y-4">
-                <div className="flex items-center space-x-3">
-                  <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-purple-600"></div>
-                  <span className="text-sm text-gray-600">
-                    {exportStatus.message}
-                  </span>
-                </div>
+                {exportStatus.stage !== 'completed' && (
+                  <div className="flex items-center space-x-3">
+                    <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-purple-600"></div>
+                    <span className="text-sm text-gray-600">
+                      {exportStatus.message}
+                    </span>
+                  </div>
+                )}
 
-                <div className="w-full bg-gray-200 rounded-full h-2">
-                  <div
-                    className="bg-purple-600 h-2 rounded-full transition-all duration-300"
-                    style={{ width: `${exportStatus.percentage}%` }}
-                  ></div>
-                </div>
+                {exportStatus.stage !== 'completed' && (
+                  <>
+                    <div className="w-full bg-gray-200 rounded-full h-2">
+                      <div
+                        className="bg-purple-600 h-2 rounded-full transition-all duration-300"
+                        style={{ width: `${exportStatus.percentage}%` }}
+                      ></div>
+                    </div>
 
-                <div className="text-center">
-                  <p className="text-sm text-gray-500 mb-3">
-                    {exportStatus.percentage}% completato
-                  </p>
-                  <Button onClick={cancelExport} variant="outline" size="sm">
-                    Annulla
-                  </Button>
-                </div>
+                    <div className="text-center">
+                      <p className="text-sm text-gray-500 mb-3">
+                        {exportStatus.percentage}% completato
+                      </p>
+                      <Button onClick={cancelExport} variant="outline" size="sm">
+                        Annulla
+                      </Button>
+                    </div>
+                  </>
+                )}
 
                 {exportStatus.stage === "completed" &&
                   exportStatus.downloadUrl && (
                     <div className="text-center pt-4 border-t">
-                      <p className="text-green-600 mb-2">
-                        ✅ Export completato!
+                      <p className="text-green-600 mb-4">
+                        ✅ Export completato con successo!
                       </p>
-                      <Button
-                        onClick={() => {
-                          window.open(exportStatus.downloadUrl!, "_blank");
-                          setShowExportModal(false);
-                          resetExport();
-                        }}
-                        className="bg-green-600 hover:bg-green-700"
-                      >
-                        <Download className="h-4 w-4 mr-2" />
-                        Scarica Video
-                      </Button>
+
+                      <div className="space-y-3">
+                        {/* Download Button */}
+                        <Button
+                          onClick={() => {
+                            downloadVideo();
+                            setShowExportModal(false);
+                            resetExport();
+                          }}
+                          className="bg-green-600 hover:bg-green-700 w-full"
+                        >
+                          <Download className="h-4 w-4 mr-2" />
+                          Scarica Video
+                        </Button>
+
+                        {/* Copy Link Button */}
+                        <Button
+                          onClick={async () => {
+                            const success = await copyDownloadLink();
+                            if (success) {
+                              setLinkCopied(true);
+                              setTimeout(() => setLinkCopied(false), 2000);
+                            }
+                          }}
+                          variant="outline"
+                          className="w-full"
+                        >
+                          {linkCopied ? (
+                            <>
+                              <CheckCircle className="h-4 w-4 mr-2 text-green-600" />
+                              Link Copiato!
+                            </>
+                          ) : (
+                            <>
+                              <Link className="h-4 w-4 mr-2" />
+                              Copia Link Download
+                            </>
+                          )}
+                        </Button>
+
+                        {/* Close Button */}
+                        <Button
+                          onClick={() => {
+                            setShowExportModal(false);
+                            resetExport();
+                          }}
+                          variant="ghost"
+                          size="sm"
+                          className="text-gray-500"
+                        >
+                          Chiudi
+                        </Button>
+                      </div>
                     </div>
                   )}
 

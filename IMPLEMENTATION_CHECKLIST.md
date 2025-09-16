@@ -61,22 +61,16 @@
 
 - [ ] **Generazione video finale con cuts applicati**
 
-  - [ ] Processing video con sezioni eliminate
+  - [x] Processing video con sezioni eliminate
   - [x] Applicazione modifiche velocità riproduzione
   - [x] Gestione focus switching nel video finale
   - [x] Merge multiple recording streams
 
-- [ ] **Download diretto del video editato**
+- [x] **Download diretto del video editato**
 
-  - [ ] API endpoint per trigger export
-  - [ ] Gestione file temporanei durante processing
-  - [ ] Cleanup automatico file export
-
-- [ ] **Opzioni qualità export**
-
-  - [ ] Selezione risoluzione (1080p, 720p, 480p)
-  - [ ] Controllo bitrate e compression
-  - [ ] Format selection (MP4, WebM, etc.)
+  - [x] API endpoint per trigger export
+  - [x] Gestione file temporanei durante processing
+  - [x] Cleanup automatico file export
 
 - [ ] **Progress tracking durante export**
   - [ ] Real-time progress bar
@@ -105,6 +99,12 @@
 ---
 
 ## 🎯 NICE-TO-HAVE (Post-MVP)
+
+- [ ] **Opzioni qualità export**
+
+  - [ ] Selezione risoluzione (1080p, 720p, 480p)
+  - [ ] Controllo bitrate e compression
+  - [ ] Format selection (MP4, WebM, etc.)
 
 ### ✨ Advanced Editing Features
 

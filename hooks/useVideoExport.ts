@@ -107,25 +107,24 @@ export function useVideoExport() {
         
         console.log('📊 Export status:', statusData)
 
+        // Use server-provided download URL if available, fallback to our endpoint
+        const downloadUrl = statusData.downloadUrl ||
+          (statusData.stage === 'completed' && jobId ? `/api/export/download/${jobId}` : undefined)
+
         setExportStatus({
           jobId,
           percentage: statusData.percentage || 0,
           message: statusData.message || 'Processing...',
           stage: statusData.stage || 'processing',
-          downloadUrl: statusData.downloadUrl,
+          downloadUrl,
           error: statusData.error
         })
 
         // Continue polling if not finished
         if (statusData.stage === 'completed') {
           console.log('🎉 Export completed!')
+          console.log('📦 Download URL ready:', downloadUrl)
           setIsExporting(false)
-          
-          // Auto-download if URL is available
-          if (statusData.downloadUrl) {
-            console.log('⬇️ Auto-downloading result...')
-            window.open(statusData.downloadUrl, '_blank')
-          }
         } else if (statusData.stage === 'failed') {
           console.error('❌ Export failed:', statusData.error)
           setIsExporting(false)
@@ -179,11 +178,37 @@ export function useVideoExport() {
     })
   }, [])
 
+  // Download video manually
+  const downloadVideo = useCallback(() => {
+    if (exportStatus.downloadUrl) {
+      console.log('⬇️ Manual download triggered:', exportStatus.downloadUrl)
+      window.open(exportStatus.downloadUrl, '_blank')
+    }
+  }, [exportStatus.downloadUrl])
+
+  // Copy download link to clipboard
+  const copyDownloadLink = useCallback(async () => {
+    if (exportStatus.downloadUrl) {
+      const fullUrl = `${window.location.origin}${exportStatus.downloadUrl}`
+      try {
+        await navigator.clipboard.writeText(fullUrl)
+        console.log('📋 Download link copied to clipboard:', fullUrl)
+        return true
+      } catch (error) {
+        console.error('❌ Failed to copy link:', error)
+        return false
+      }
+    }
+    return false
+  }, [exportStatus.downloadUrl])
+
   return {
     exportStatus,
     isExporting,
     startExport,
     cancelExport,
-    resetExport
+    resetExport,
+    downloadVideo,
+    copyDownloadLink
   }
 }
