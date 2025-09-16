@@ -92,7 +92,8 @@ export async function POST(request: NextRequest) {
         startTime: section.start_time,
         endTime: section.end_time,
         isDeleted: section.is_deleted,
-        playbackSpeed: section.playback_speed
+        playbackSpeed: section.playback_speed,
+        focusedParticipantId: section.focused_participant_id
       }))
     } else {
       // Create default single section if none exist
@@ -103,15 +104,13 @@ export async function POST(request: NextRequest) {
         startTime: 0,
         endTime: maxDuration,
         isDeleted: false,
-        playbackSpeed: 1.0
+        playbackSpeed: 1.0,
+        focusedParticipantId: undefined
       }]
     }
 
-    // Get focus segments
-    const { data: focusSegments } = await supabase
-      .from('focus_segments')
-      .select('*')
-      .eq('room_id', roomData.id)
+    // LEGACY: Focus segments are now handled via video_sections.focused_participant_id
+    console.log('Focus segments are now managed via video_sections.focused_participant_id field')
 
     // Create job ID
     const jobId = `export_${roomId}_${Date.now()}`
@@ -128,13 +127,6 @@ export async function POST(request: NextRequest) {
         recording_started_at: r.recording_started_at
       })),
       videoSections,
-      focusSegments: (focusSegments || []).map(fs => ({
-        id: fs.id,
-        startTime: fs.start_time,
-        endTime: fs.end_time,
-        focusedParticipantId: fs.focused_participant_id,
-        type: fs.segment_type || 'conversation'
-      })),
       transcriptions: (transcriptions || []).map(t => ({
         id: t.id,
         transcript_text: t.transcript_text,

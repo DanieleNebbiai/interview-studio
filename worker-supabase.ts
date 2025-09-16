@@ -186,7 +186,6 @@ async function processExportJob(jobId: string, jobData: ExportJobData) {
     recordings,
     videoSections,
     transcriptions,
-    focusSegments,
     exportSettings,
   } = jobData;
 
