@@ -8,6 +8,7 @@ interface VideoSection {
   endTime: number
   isDeleted: boolean
   playbackSpeed: number
+  focusedParticipantId?: string
 }
 
 interface ZoomRange {
@@ -84,7 +85,8 @@ export async function POST(request: NextRequest) {
       console.log('📊 Frontend sections data:', editState.videoSections.map(s => ({
         id: s.id,
         speed: s.playbackSpeed,
-        deleted: s.isDeleted
+        deleted: s.isDeleted,
+        focus: s.focusedParticipantId
       })))
       
       const videoSectionUpserts = editState.videoSections.map(section => ({
@@ -94,6 +96,7 @@ export async function POST(request: NextRequest) {
         end_time: section.endTime,
         is_deleted: section.isDeleted,
         playback_speed: section.playbackSpeed,
+        focused_participant_id: section.focusedParticipantId || null,
         created_by: 'user',
         user_modified: true // User has made modifications
       }))
@@ -101,7 +104,8 @@ export async function POST(request: NextRequest) {
       console.log('💾 Upserting data:', videoSectionUpserts.map(u => ({
         section_id: u.section_id,
         playback_speed: u.playback_speed,
-        is_deleted: u.is_deleted
+        is_deleted: u.is_deleted,
+        focused_participant_id: u.focused_participant_id
       })))
 
       const { error: sectionsError, data: upsertResult } = await supabase
@@ -119,7 +123,8 @@ export async function POST(request: NextRequest) {
       console.log('🔍 Upsert result from DB:', upsertResult?.map(r => ({
         section_id: r.section_id,
         playback_speed: r.playback_speed,
-        is_deleted: r.is_deleted
+        is_deleted: r.is_deleted,
+        focused_participant_id: r.focused_participant_id
       })))
       
       // Clean up any user video sections that are no longer in the frontend state
@@ -163,55 +168,9 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Synchronize focus segments (complete replacement of user-created segments)
-    console.log(`Synchronizing ${editState.zoomRanges.length} focus segments`)
-    console.log('Focus segments from frontend:', editState.zoomRanges.map(z => ({
-      id: z.id,
-      aiGenerated: z.aiGenerated,
-      startTime: z.startTime,
-      endTime: z.endTime
-    })))
-    
-    // First, delete all existing user-created focus segments for this room
-    const { error: focusDeleteError } = await supabase
-      .from('focus_segments')
-      .delete()
-      .eq('room_id', roomData.id)
-      .eq('ai_generated', false)
-
-    if (focusDeleteError) {
-      console.error('Error deleting existing user focus segments:', focusDeleteError)
-      // Continue anyway - we'll still insert new ones
-    }
-
-    // Then, insert all current user focus segments
-    const userFocusSegments = editState.zoomRanges.filter(zoomRange => !zoomRange.aiGenerated)
-    
-    if (userFocusSegments.length > 0) {
-      const focusSegmentInserts = userFocusSegments.map(zoomRange => ({
-        room_id: roomData.id,
-        start_time: zoomRange.startTime,
-        end_time: zoomRange.endTime,
-        focused_participant_id: zoomRange.focusOn,
-        created_by: 'user',
-        segment_type: zoomRange.type || 'conversation',
-        ai_generated: false,
-        reason: zoomRange.reason || null,
-        confidence: zoomRange.confidence || null
-      }))
-
-      const { error: insertError } = await supabase
-        .from('focus_segments')
-        .insert(focusSegmentInserts)
-
-      if (insertError) {
-        console.error('Failed to save user focus segments:', insertError)
-      } else {
-        console.log(`Successfully saved ${userFocusSegments.length} user focus segments`)
-      }
-    } else {
-      console.log('No user focus segments to save')
-    }
+    // LEGACY: Focus segments are now handled directly in video_sections via focused_participant_id
+    console.log('Focus segments are now managed via video_sections.focused_participant_id field')
+    const userFocusSegments: any[] = [] // Empty array since we don't use separate focus_segments anymore
 
     console.log(`Successfully saved user edit state for room: ${roomId}`)
 
@@ -221,6 +180,9 @@ export async function POST(request: NextRequest) {
     const deletedSections = editState.videoSections.filter(s => s.isDeleted).length
     const speedModifiedSections = editState.videoSections.filter(s => s.playbackSpeed !== 1.0).length
 
+    // Count sections with focus
+    const sectionsWithFocus = editState.videoSections.filter(s => s.focusedParticipantId).length
+
     return NextResponse.json({
       success: true,
       roomId,
@@ -228,13 +190,14 @@ export async function POST(request: NextRequest) {
         totalSections: editState.videoSections.length,
         deletedSections,
         speedModifiedSections,
-        zoomRanges: editState.zoomRanges.length,
+        sectionsWithFocus, // New field for focus tracking
+        zoomRanges: 0, // Legacy field - always 0 now
         splitPoints: editState.splitPoints.length,
         originalDuration: Math.round(totalOriginalDuration),
         finalDuration: Math.round(finalDuration),
         compressionRatio: finalDuration / totalOriginalDuration
       },
-      message: `Edit state saved: ${editState.videoSections.length} sections, ${userFocusSegments.length} user focus segments`
+      message: `Edit state saved: ${editState.videoSections.length} sections, ${sectionsWithFocus} sections with focus`
     })
 
   } catch (error) {
@@ -303,12 +266,8 @@ export async function GET(request: NextRequest) {
     
     console.log(`[GET] Video sections query result:`, { videoSections: videoSections?.length, sectionsError })
 
-    // Get user focus segments (zoom ranges)
-    const { data: focusSegments, error: focusError } = await supabase
-      .from('focus_segments')
-      .select('*')
-      .eq('room_id', roomData.id)
-      .eq('ai_generated', false) // Only user-created focus segments
+    // LEGACY: Focus segments are now handled via video_sections.focused_participant_id
+    const focusSegments: any[] = [] // Empty since we don't use focus_segments anymore
 
     if (sectionsError) {
       console.error('Error fetching video sections:', sectionsError)
@@ -325,7 +284,8 @@ export async function GET(request: NextRequest) {
       startTime: section.start_time,
       endTime: section.end_time,
       isDeleted: section.is_deleted,
-      playbackSpeed: section.playback_speed
+      playbackSpeed: section.playback_speed,
+      focusedParticipantId: section.focused_participant_id
     }));
 
     // Derive split points from video sections

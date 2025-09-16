@@ -19,13 +19,7 @@ export interface ExportJobData {
     endTime: number
     isDeleted: boolean
     playbackSpeed: number
-  }>
-  focusSegments: Array<{
-    id: string
-    startTime: number
-    endTime: number
-    focusedParticipantId: string
-    type: string
+    focusedParticipantId?: string
   }>
   transcriptions: Array<{
     id: string

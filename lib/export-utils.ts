@@ -237,12 +237,11 @@ export async function buildFFmpegCommandMemorySafe(data: {
   inputVideos: string[]
   outputPath: string
   videoSections: ExportJobData['videoSections']
-  focusSegments: ExportJobData['focusSegments']
   subtitleFile?: string
   settings: ExportJobData['exportSettings']
   recordings: ExportJobData['recordings']
 }): Promise<string> {
-  const { inputVideos, outputPath, videoSections, focusSegments, subtitleFile, settings, recordings } = data
+  const { inputVideos, outputPath, videoSections, subtitleFile, settings, recordings } = data
   const validSections = videoSections.filter(section => !section.isDeleted)
 
   // Calculate expected final duration after speed adjustments
@@ -336,7 +335,6 @@ export async function buildFFmpegCommandMemorySafe(data: {
         outputPath: chunkOutputPath,
         chunk,
         chunkIndex,
-        focusSegments,
         settings,
         recordingVideoMap,
         videoSyncOffsets
@@ -402,14 +400,13 @@ export function buildFFmpegCommand(data: {
   inputVideos: string[]
   outputPath: string
   videoSections: ExportJobData['videoSections']
-  focusSegments: ExportJobData['focusSegments']
   subtitleFile?: string
   settings: ExportJobData['exportSettings']
   recordings: ExportJobData['recordings']
 }): Promise<string> {
-  
+
   return new Promise((resolve, reject) => {
-    const { inputVideos, outputPath, videoSections, focusSegments, subtitleFile, settings, recordings } = data
+    const { inputVideos, outputPath, videoSections, subtitleFile, settings, recordings } = data
     
     const command = ffmpeg() 
     
@@ -440,7 +437,7 @@ export function buildFFmpegCommand(data: {
     
     // OVERLAY-BASED FOCUS: Base 50/50 with dynamic full-screen overlays - MULTI-SECTION SUPPORT
     console.log(`📹 Processing ${validSections.length} sections with OVERLAY-BASED FOCUS`)
-    console.log(`🎯 Focus segments:`, focusSegments)
+    console.log(`🎯 Sections with focus:`, validSections.filter(s => s.focusedParticipantId).map(s => ({ id: s.id, focus: s.focusedParticipantId })))
 
     // Process each section with speed control and overlay focus
     const sectionVideoStreams: string[] = []
@@ -466,37 +463,29 @@ export function buildFFmpegCommand(data: {
 
         let currentVideoStream = `[base_video_s${sectionIndex}]`
 
-        // Apply focus overlays for this section (filter focus segments by section timing)
-        const sectionFocusSegments = focusSegments.filter(fs => 
-          fs.startTime >= section.startTime && fs.endTime <= section.endTime
-        )
+        // Apply focus overlay for this section if focusedParticipantId is set
+        if (section.focusedParticipantId && recordingVideoMap[section.focusedParticipantId] !== undefined) {
+          const videoIndex = recordingVideoMap[section.focusedParticipantId]
+          const overlayName = `overlay_s${sectionIndex}`
+          const fullStreamName = `full${videoIndex}_s${sectionIndex}`
 
-        sectionFocusSegments.forEach((fs, fsIndex) => {
-          if (fs.focusedParticipantId && recordingVideoMap[fs.focusedParticipantId] !== undefined) {
-            const videoIndex = recordingVideoMap[fs.focusedParticipantId]
-            const overlayName = `overlay_s${sectionIndex}_${fsIndex}`
-            const fullStreamName = `full${videoIndex}_s${sectionIndex}_${fsIndex}`
+          console.log(`🎯 Section ${sectionIndex} focus overlay: participant ${section.focusedParticipantId} (video ${videoIndex}) for entire section ${section.startTime.toFixed(2)}s-${section.endTime.toFixed(2)}s`)
 
-            console.log(`🎯 Section ${sectionIndex} focus overlay ${fsIndex}: participant ${fs.focusedParticipantId} (video ${videoIndex}) from ${fs.startTime.toFixed(2)}s to ${fs.endTime.toFixed(2)}s`)
+          // Create individual full-screen stream with speed control
+          filterComplex.push(
+            `[${videoIndex}:v]trim=${section.startTime.toFixed(2)}:${section.endTime.toFixed(2)},scale=1280:720,setsar=1/1${speedFilter}[${fullStreamName}]`
+          )
 
-            // Create individual full-screen stream with speed control
-            filterComplex.push(
-              `[${videoIndex}:v]trim=${section.startTime.toFixed(2)}:${section.endTime.toFixed(2)},scale=1280:720,setsar=1/1${speedFilter}[${fullStreamName}]`
-            )
+          // Focus overlay covers the entire section duration (no timing sub-segments)
+          // The overlay is enabled for the full section duration after speed adjustment
+          const sectionDuration = (section.endTime - section.startTime) / section.playbackSpeed
+          const enableExpr = `'between(t,0,${sectionDuration.toFixed(2)})'`
+          filterComplex.push(
+            `${currentVideoStream}[${fullStreamName}]overlay=enable=${enableExpr}[${overlayName}]`
+          )
 
-            // Adjust timing relative to section start and account for speed
-            // When using setpts=PTS/speed, the video timeline is compressed by the speed factor
-            const relativeStart = Math.max(0, fs.startTime - section.startTime) / section.playbackSpeed
-            const relativeEnd = Math.min(section.endTime - section.startTime, fs.endTime - section.startTime) / section.playbackSpeed
-
-            const enableExpr = `'between(t,${relativeStart.toFixed(2)},${relativeEnd.toFixed(2)})'`
-            filterComplex.push(
-              `${currentVideoStream}[${fullStreamName}]overlay=enable=${enableExpr}[${overlayName}]`
-            )
-
-            currentVideoStream = `[${overlayName}]`
-          }
-        })
+          currentVideoStream = `[${overlayName}]`
+        }
 
         // Set final video stream for this section
         const sectionFinalVideo = `section${sectionIndex}_video`
@@ -672,11 +661,12 @@ export function buildFFmpegCommand(data: {
 
 // Create memory-safe chunks from video sections
 function createMemorySafeChunks(sections: ExportJobData['videoSections'], maxChunkDuration: number) {
-  const chunks: Array<{ 
+  const chunks: Array<{
     startTime: number
     endTime: number
     playbackSpeed: number
     originalSectionId: string
+    focusedParticipantId?: string
   }> = []
 
   for (const section of sections) {
@@ -688,7 +678,8 @@ function createMemorySafeChunks(sections: ExportJobData['videoSections'], maxChu
         startTime: section.startTime,
         endTime: section.endTime,
         playbackSpeed: section.playbackSpeed,
-        originalSectionId: section.id
+        originalSectionId: section.id,
+        focusedParticipantId: section.focusedParticipantId
       })
     } else {
       // Break large section into smaller chunks
@@ -699,7 +690,8 @@ function createMemorySafeChunks(sections: ExportJobData['videoSections'], maxChu
           startTime: currentStart,
           endTime: chunkEnd,
           playbackSpeed: section.playbackSpeed,
-          originalSectionId: section.id
+          originalSectionId: section.id,
+          focusedParticipantId: section.focusedParticipantId
         })
         currentStart = chunkEnd
       }
@@ -720,14 +712,13 @@ function createMemorySafeChunks(sections: ExportJobData['videoSections'], maxChu
 async function processChunkMemorySafe(params: {
   inputVideos: string[]
   outputPath: string
-  chunk: { startTime: number; endTime: number; playbackSpeed: number; originalSectionId: string }
+  chunk: { startTime: number; endTime: number; playbackSpeed: number; originalSectionId: string; focusedParticipantId?: string }
   chunkIndex: number
-  focusSegments: ExportJobData['focusSegments']
   settings: ExportJobData['exportSettings']
   recordingVideoMap: { [key: string]: number }
   videoSyncOffsets: number[]
 }): Promise<void> {
-  const { inputVideos, outputPath, chunk, chunkIndex, focusSegments, settings, recordingVideoMap, videoSyncOffsets } = params
+  const { inputVideos, outputPath, chunk, chunkIndex, settings, recordingVideoMap, videoSyncOffsets } = params
 
   return new Promise((resolve, reject) => {
     const command = ffmpeg()
@@ -773,16 +764,11 @@ async function processChunkMemorySafe(params: {
 
       const currentVideoStream = `[base_video_c${chunkIndex}]`
 
-      // TEMPORARILY DISABLED: Focus overlays to isolate trim duration issue
-      console.log(`🚫 Focus overlays temporarily disabled for memory testing`)
-
-      const chunkFocusSegments = focusSegments.filter(fs =>
-        fs.startTime < chunk.endTime && fs.endTime > chunk.startTime // Intersects with chunk
-      )
-
-      console.log(`🎯 Chunk ${chunkIndex}: Found ${chunkFocusSegments.length} focus segments (DISABLED)`)
-      if (chunkFocusSegments.length > 0) {
-        console.log(`🎯 Focus segments:`, chunkFocusSegments.map(fs => `${fs.startTime}-${fs.endTime} (participant: ${fs.focusedParticipantId})`))
+      // NEW FOCUS SYSTEM: Focus is now a property of the chunk (derived from section)
+      if (chunk.focusedParticipantId) {
+        console.log(`🎯 Chunk ${chunkIndex}: Focus on participant ${chunk.focusedParticipantId} for entire chunk`)
+      } else {
+        console.log(`🎯 Chunk ${chunkIndex}: No focus overlay (50/50 split)`)
       }
 
       // FOCUS OVERLAYS DISABLED - all focus processing commented out
@@ -1237,8 +1223,9 @@ async function cleanupFiles(files: string[], type: string): Promise<void> {
   }
 }
 
-// Process a single section with proper speed control (Legacy)
-async function processSectionSeparately(params: { 
+// Process a single section with proper speed control (Legacy - COMMENTED OUT)
+/*
+async function processSectionSeparately(params: {
   inputVideos: string[]
   outputPath: string
   section: ExportJobData['videoSections'][0]
@@ -1359,8 +1346,10 @@ async function processSectionSeparately(params: {
       .run()
   })
 }
+*/
 
-// Concatenate processed sections
+// Concatenate processed sections (Legacy - COMMENTED OUT)
+/*
 async function concatenateSections(sectionFiles: string[], outputPath: string, subtitleFile?: string, settings?: any): Promise<void> {
   return new Promise((resolve, reject) => {
     const command = ffmpeg()
@@ -1415,6 +1404,7 @@ async function concatenateSections(sectionFiles: string[], outputPath: string, s
       .run()
   })
 }
+*/
 
 // Parse FFmpeg timemark (HH:MM:SS.SS) to seconds
 function parseTimemark(timemark: string): number | null {

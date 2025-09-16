@@ -292,7 +292,6 @@ async function processExportJob(jobId: string, jobData: ExportJobData) {
         inputVideos: localVideos,
         outputPath,
         videoSections,
-        focusSegments,
         subtitleFile,
         settings: exportSettings,
         recordings,

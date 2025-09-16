@@ -9,7 +9,6 @@ import {
   Volume2,
   VolumeX,
   ArrowLeft,
-  MoreHorizontal,
   Download,
 } from "lucide-react";
 import { useVideoExport, ExportSettings } from "@/hooks/useVideoExport";
@@ -44,17 +43,7 @@ interface EditData {
   roomName: string;
 }
 
-interface ZoomRange {
-  id: string;
-  startTime: number;
-  endTime: number;
-  focusOn: string; // recording ID to focus on
-  participantIndex: number;
-  aiGenerated?: boolean; // Whether this was created by AI
-  reason?: string; // AI's reason for this focus segment
-  confidence?: number; // AI confidence score (0-1)
-  type?: 'monologue' | 'conversation' | 'silence'; // AI-detected segment type
-}
+// LEGACY: ZoomRange interface removed - focus now handled via VideoSection.focusedParticipantId
 
 interface VideoSection {
   id: string;
@@ -62,6 +51,7 @@ interface VideoSection {
   endTime: number;
   isDeleted: boolean;
   playbackSpeed: number; // 1.0 = normal, 0.5 = half speed, 2.0 = double speed
+  focusedParticipantId?: string; // recording ID to focus on (replaces separate focus timeline)
 }
 
 export default function EditPage() {
@@ -78,34 +68,46 @@ export default function EditPage() {
   const [mutedVideos, setMutedVideos] = useState<Set<string>>(new Set());
   const videoRefs = useRef<{ [key: string]: HTMLVideoElement }>({});
 
-  // Zoom system states
-  const [selectedFocus, setSelectedFocus] = useState<string>(""); // recording ID
-  const [showZoomMenu, setShowZoomMenu] = useState(false);
-  const [zoomRanges, setZoomRanges] = useState<ZoomRange[]>([]);
-  const [isSelectingZoomRange, setIsSelectingZoomRange] = useState(false);
-  const [zoomRangeStart, setZoomRangeStart] = useState<number | null>(null);
-  const [isDragging, setIsDragging] = useState(false);
-  const [dragCurrentTime, setDragCurrentTime] = useState<number | null>(null);
+  // LEGACY: Focus segments removed - now using videoSections.focusedParticipantId
   const [videoErrors, setVideoErrors] = useState<Set<string>>(new Set());
   const [focusedVideo, setFocusedVideo] = useState<string | null>(null);
-  const [syncOffsets, setSyncOffsets] = useState<{ [recordingId: string]: number }>({});
-  
+  const [syncOffsets, setSyncOffsets] = useState<{
+    [recordingId: string]: number;
+  }>({});
+
   // Video loading tracking for accurate duration calculation
   const [videosLoaded, setVideosLoaded] = useState<Set<string>>(new Set());
-  const [realVideoDurations, setRealVideoDurations] = useState<{ [recordingId: string]: number }>({});
-  
+
   // Split/Section system
   const [splitPoints, setSplitPoints] = useState<number[]>([]);
   const [videoSections, setVideoSections] = useState<VideoSection[]>([]);
   const [isSplitMode, setIsSplitMode] = useState<boolean>(false);
-  const [contextMenu, setContextMenu] = useState<{x: number; y: number; sectionId: string; openUpward?: boolean} | null>(null);
-  
+  const [contextMenu, setContextMenu] = useState<{
+    x: number;
+    y: number;
+    sectionId: string;
+    openUpward?: boolean;
+  } | null>(null);
+
   // Edit save functionality
-  const { saveEditState, loadEditState, isSaving, lastSaved, saveError } = useEditSave();
+  const { saveEditState, loadEditState, isSaving, lastSaved, saveError } =
+    useEditSave();
 
   // Export system
-  const { exportStatus, isExporting, startExport, cancelExport, resetExport } = useVideoExport();
+  const { exportStatus, isExporting, startExport, cancelExport, resetExport } =
+    useVideoExport();
   const [showExportModal, setShowExportModal] = useState(false);
+
+  // Split point interaction states
+  const [isDraggingSplit, setIsDraggingSplit] = useState(false);
+  const [draggingSplitIndex, setDraggingSplitIndex] = useState<number | null>(
+    null
+  );
+  const [splitContextMenu, setSplitContextMenu] = useState<{
+    x: number;
+    y: number;
+    splitIndex: number;
+  } | null>(null);
 
   // Calculate cut offsets based on recording start timestamps (with created_at fallback)
   // These offsets are used to automatically "cut" the beginning of videos to synchronize their start points
@@ -113,39 +115,51 @@ export default function EditPage() {
   // Calculate real duration based on loaded video elements
   const updateRealDuration = useCallback(() => {
     if (!editData) return;
-    
-    const allVideosLoaded = editData.recordings.every(r => videosLoaded.has(r.id));
+
+    const allVideosLoaded = editData.recordings.every((r) =>
+      videosLoaded.has(r.id)
+    );
     if (!allVideosLoaded) {
-      console.log('⏳ Waiting for all videos to load before calculating real duration');
+      console.log(
+        "⏳ Waiting for all videos to load before calculating real duration"
+      );
       return;
     }
-    
+
     // Get real durations from loaded video elements
-    const realDurations = editData.recordings.map(recording => {
+    const realDurations = editData.recordings.map((recording) => {
       const video = videoRefs.current[recording.id];
       const realDuration = video ? video.duration : recording.duration;
-      console.log(`📹 Video ${recording.id}: DB duration=${recording.duration}s, Real duration=${realDuration}s`);
+      console.log(
+        `📹 Video ${recording.id}: DB duration=${recording.duration}s, Real duration=${realDuration}s`
+      );
       return realDuration;
     });
-    
+
     // Handle sync offsets - subtract max offset from max real duration
     const offsetValues = Object.values(syncOffsets);
     const maxOffset = offsetValues.length > 0 ? Math.max(...offsetValues) : 0;
     const maxRealDuration = Math.max(...realDurations);
     const finalRealDuration = maxRealDuration - maxOffset;
-    
-    console.log(`🎬 Duration calculation: maxReal=${maxRealDuration}s, maxOffset=${maxOffset}s, final=${finalRealDuration}s`);
-    
+
+    console.log(
+      `🎬 Duration calculation: maxReal=${maxRealDuration}s, maxOffset=${maxOffset}s, final=${finalRealDuration}s`
+    );
+
     // Only update if duration actually changed significantly (more than 0.1s difference)
     if (Math.abs(duration - finalRealDuration) > 0.1) {
-      console.log(`📐 Updating duration from ${duration}s to ${finalRealDuration}s`);
+      console.log(
+        `📐 Updating duration from ${duration}s to ${finalRealDuration}s`
+      );
       setDuration(finalRealDuration);
-      
+
       // Update video sections to the new duration if they extend beyond it
-      setVideoSections(prevSections => {
-        const updated = prevSections.map(section => {
+      setVideoSections((prevSections) => {
+        const updated = prevSections.map((section) => {
           if (section.endTime > finalRealDuration) {
-            console.log(`✂️ Trimming section ${section.id} from ${section.endTime}s to ${finalRealDuration}s`);
+            console.log(
+              `✂️ Trimming section ${section.id} from ${section.endTime}s to ${finalRealDuration}s`
+            );
             return { ...section, endTime: finalRealDuration };
           }
           return section;
@@ -156,23 +170,28 @@ export default function EditPage() {
   }, [editData, videosLoaded, syncOffsets, duration, videoRefs]);
 
   const calculateSyncOffsets = useCallback((recordings: Recording[]) => {
-    console.log('=== AUTO-CUT OFFSET CALCULATION ===');
-    console.log('Raw recordings data:', recordings.map(r => ({
-      id: r.id,
-      recording_started_at: r.recording_started_at,
-      created_at: r.created_at
-    })));
-    
+    console.log("=== AUTO-CUT OFFSET CALCULATION ===");
+    console.log(
+      "Raw recordings data:",
+      recordings.map((r) => ({
+        id: r.id,
+        recording_started_at: r.recording_started_at,
+        created_at: r.created_at,
+      }))
+    );
+
     // Try recording_started_at first, fallback to created_at
-    const recordingsWithTimestamps = recordings.filter(r => r.recording_started_at || r.created_at);
-    
+    const recordingsWithTimestamps = recordings.filter(
+      (r) => r.recording_started_at || r.created_at
+    );
+
     if (recordingsWithTimestamps.length < 1) {
-      console.log('No recordings with timestamps found');
+      console.log("No recordings with timestamps found");
       return {};
     }
-    
+
     if (recordingsWithTimestamps.length < 2) {
-      console.log('Only one recording found, no synchronization needed');
+      console.log("Only one recording found, no synchronization needed");
       // Return zero offset for the single recording
       const singleOffset: { [recordingId: string]: number } = {};
       singleOffset[recordingsWithTimestamps[0].id] = 0;
@@ -181,48 +200,64 @@ export default function EditPage() {
     }
 
     // Determine which timestamp to use and log the source
-    const usingRecordingStarted = recordings.some(r => r.recording_started_at);
-    const timestampSource = usingRecordingStarted ? 'recording_started_at' : 'created_at';
+    const usingRecordingStarted = recordings.some(
+      (r) => r.recording_started_at
+    );
+    const timestampSource = usingRecordingStarted
+      ? "recording_started_at"
+      : "created_at";
     console.log(`Using ${timestampSource} for auto-cut synchronization`);
 
     // Find the latest recording start time as reference point (all videos will be cut to start from this point)
-    const timestamps = recordingsWithTimestamps.map(r => {
-      const timestampStr = r.recording_started_at || r.created_at!;
-      const timestamp = new Date(timestampStr).getTime();
-      console.log(`Recording ${r.id}: ${timestampStr} -> ${timestamp}ms`);
-      
-      // Validate timestamp
-      if (!isFinite(timestamp) || timestamp <= 0) {
-        console.error(`Invalid timestamp for recording ${r.id}: ${timestampStr} -> ${timestamp}ms`);
-        return null;
-      }
-      
-      return {
-        id: r.id,
-        timestamp
-      };
-    }).filter(t => t !== null) as Array<{id: string, timestamp: number}>;
-    
+    const timestamps = recordingsWithTimestamps
+      .map((r) => {
+        const timestampStr = r.recording_started_at || r.created_at!;
+        const timestamp = new Date(timestampStr).getTime();
+        console.log(`Recording ${r.id}: ${timestampStr} -> ${timestamp}ms`);
+
+        // Validate timestamp
+        if (!isFinite(timestamp) || timestamp <= 0) {
+          console.error(
+            `Invalid timestamp for recording ${r.id}: ${timestampStr} -> ${timestamp}ms`
+          );
+          return null;
+        }
+
+        return {
+          id: r.id,
+          timestamp,
+        };
+      })
+      .filter((t) => t !== null) as Array<{ id: string; timestamp: number }>;
+
     if (timestamps.length === 0) {
-      console.error('No valid timestamps found');
+      console.error("No valid timestamps found");
       return {};
     }
-    
-    const latestTime = Math.max(...timestamps.map(t => t.timestamp));
-    console.log(`Latest time (sync reference): ${latestTime}ms (${new Date(latestTime).toISOString()})`);
-    
+
+    const latestTime = Math.max(...timestamps.map((t) => t.timestamp));
+    console.log(
+      `Latest time (sync reference): ${latestTime}ms (${new Date(
+        latestTime
+      ).toISOString()})`
+    );
+
     // Calculate cut offset for each recording (how much to cut from the beginning)
     const offsets: { [recordingId: string]: number } = {};
     timestamps.forEach(({ id, timestamp }) => {
       const cutMs = latestTime - timestamp;
       const cutSec = cutMs / 1000;
       offsets[id] = cutSec;
-      console.log(`Recording ${id}: will cut ${cutMs}ms = ${cutSec.toFixed(3)}s from start (using ${timestampSource})`);
+      console.log(
+        `Recording ${id}: will cut ${cutMs}ms = ${cutSec.toFixed(
+          3
+        )}s from start (using ${timestampSource})`
+      );
     });
-    
-    console.log('Final cut offsets:', offsets);
-    console.log('=== END AUTO-CUT CALCULATION ===');
-    
+
+    console.log("Final cut offsets:", offsets);
+    console.log("=== END AUTO-CUT CALCULATION ===");
+
     setSyncOffsets(offsets);
     return offsets;
   }, []);
@@ -256,35 +291,45 @@ export default function EditPage() {
 
         // Calculate sync offsets first
         const offsets = calculateSyncOffsets(data.recordings);
-        
+
         // Set duration to the longest recording minus the maximum offset (to align all videos)
         const maxDuration = Math.max(
           ...data.recordings.map((r: Recording) => r.duration)
         );
-        
+
         // Handle case where offsets might be empty
         const offsetValues = Object.values(offsets);
-        const maxOffset = offsetValues.length > 0 ? Math.max(...offsetValues) : 0;
+        const maxOffset =
+          offsetValues.length > 0 ? Math.max(...offsetValues) : 0;
         const adjustedDuration = maxDuration - maxOffset;
-        
+
         // Validate duration before setting
-        const finalDuration = isFinite(adjustedDuration) && adjustedDuration > 0 ? adjustedDuration : maxDuration;
+        const finalDuration =
+          isFinite(adjustedDuration) && adjustedDuration > 0
+            ? adjustedDuration
+            : maxDuration;
         setDuration(finalDuration);
-        
+
         if (finalDuration === adjustedDuration) {
-          console.log(`Set duration to ${finalDuration}s (maxDuration: ${maxDuration}s, maxOffset: ${maxOffset}s)`);
+          console.log(
+            `Set duration to ${finalDuration}s (maxDuration: ${maxDuration}s, maxOffset: ${maxOffset}s)`
+          );
         } else {
-          console.error(`Invalid duration calculation: ${adjustedDuration} (maxDuration: ${maxDuration}, maxOffset: ${maxOffset}), using fallback: ${finalDuration}s`);
+          console.error(
+            `Invalid duration calculation: ${adjustedDuration} (maxDuration: ${maxDuration}, maxOffset: ${maxOffset}), using fallback: ${finalDuration}s`
+          );
         }
-        
+
         // Initialize with one full section (0 to finalDuration)
-        setVideoSections([{
-          id: `section-0-${finalDuration}`,
-          startTime: 0,
-          endTime: finalDuration,
-          isDeleted: false,
-          playbackSpeed: 1.0
-        }]);
+        setVideoSections([
+          {
+            id: `section-0-${finalDuration}`,
+            startTime: 0,
+            endTime: finalDuration,
+            isDeleted: false,
+            playbackSpeed: 1.0,
+          },
+        ]);
       } else {
         throw new Error("No recordings found for this room");
       }
@@ -296,109 +341,68 @@ export default function EditPage() {
     }
   }, [roomId, calculateSyncOffsets]);
 
-  const loadFocusSegments = useCallback(async () => {
-    try {
-      console.log('Loading focus segments for room:', roomId);
-      
-      const response = await fetch(`/api/recordings/focus-segments?roomId=${roomId}`);
-      if (!response.ok) {
-        throw new Error('Failed to load focus segments');
-      }
-      
-      const data = await response.json();
-      console.log('Focus segments API response:', data);
+  // DISABLED: Legacy focus segments - now everything is managed via video_sections
 
-      if (data.focusSegments && data.focusSegments.length > 0) {
-        // Convert focus segments to the format expected by the editor
-        const focusZoomRanges: ZoomRange[] = data.focusSegments.map((segment: {
-          id: string;
-          start_time: number;
-          end_time: number; 
-          focused_participant_id: string;
-          reason?: string;
-          confidence?: number;
-          segment_type?: string;
-          ai_generated?: boolean;
-        }, index: number) => {
-          const participantIndex = parseInt(segment.focused_participant_id.replace('participant_', '')) - 1;
-          console.log(`Focus Segment ${index + 1}: ${segment.start_time.toFixed(1)}s-${segment.end_time.toFixed(1)}s → participant ${participantIndex + 1}${segment.reason ? ` (${segment.reason})` : ''}`);
-          
-          return {
-            id: segment.id || `focus-${index}`,
-            startTime: segment.start_time,
-            endTime: segment.end_time,
-            focusOn: segment.focused_participant_id,
-            participantIndex: Math.max(0, participantIndex), // Ensure valid index
-            reason: segment.reason,
-            confidence: segment.confidence,
-            type: segment.segment_type as 'monologue' | 'conversation' | 'silence',
-            aiGenerated: segment.ai_generated || false
-          };
-        });
-
-        console.log(`Loaded ${focusZoomRanges.length} focus segments`);
-        setZoomRanges(focusZoomRanges);
-      } else {
-        console.log('No focus segments found');
-      }
-      
-    } catch (error) {
-      console.error('Error loading focus segments:', error);
-    }
-  }, [roomId]);
-
-  // Load video sections on component mount (either AI-generated during processing or user-modified)  
+  // Load video sections on component mount (either AI-generated during processing or user-modified)
   const [sectionsLoaded, setSectionsLoaded] = useState(false);
-  
+
   useEffect(() => {
     const loadVideoSections = async () => {
       if (roomId && duration > 0 && !sectionsLoaded) {
         try {
-          console.log('📖 Loading video sections from database...')
-          const savedState = await loadEditState(roomId)
-          console.log('📊 Loaded sections:', savedState)
-          
+          console.log("📖 Loading video sections from database...");
+          const savedState = await loadEditState(roomId);
+          console.log("📊 Loaded sections:", savedState);
+
           if (savedState && savedState.videoSections.length > 0) {
-            console.log('✅ Loading', savedState.videoSections.length, 'video sections')
-            setVideoSections(savedState.videoSections)
-            if (savedState.zoomRanges.length > 0) {
-              setZoomRanges(savedState.zoomRanges)
-            }
+            console.log(
+              "✅ Loading",
+              savedState.videoSections.length,
+              "video sections"
+            );
+            setVideoSections(savedState.videoSections);
+            // LEGACY: zoomRanges removed - focus now in videoSections
             if (savedState.splitPoints.length > 0) {
-              setSplitPoints(savedState.splitPoints)
+              setSplitPoints(savedState.splitPoints);
             }
           } else {
-            console.log('⚠️ No video sections found in database, keeping default')
+            console.log(
+              "⚠️ No video sections found in database, keeping default"
+            );
           }
-          setSectionsLoaded(true)
+          setSectionsLoaded(true);
         } catch (error) {
-          console.error('❌ Failed to load video sections:', error)
-          setSectionsLoaded(true)
+          console.error("❌ Failed to load video sections:", error);
+          setSectionsLoaded(true);
         }
       }
-    }
-    
-    loadVideoSections()
+    };
+
+    loadVideoSections();
   }, [roomId, duration, sectionsLoaded, loadEditState]);
 
   useEffect(() => {
     fetchEditData();
   }, [fetchEditData]);
-  
-  useEffect(() => {
-    if (editData) {
-      loadFocusSegments();
-    }
-  }, [editData, loadFocusSegments]);
 
-  // Close context menu when clicking elsewhere
+  // DISABLED: Legacy focus segments - now using video_sections
+  // useEffect(() => {
+  //   if (editData) {
+  //     loadFocusSegments();
+  //   }
+  // }, [editData, loadFocusSegments]);
+
+  // Close context menus when clicking elsewhere
   useEffect(() => {
-    const handleClickOutside = () => setContextMenu(null);
-    if (contextMenu) {
-      document.addEventListener('click', handleClickOutside);
-      return () => document.removeEventListener('click', handleClickOutside);
+    const handleClickOutside = () => {
+      setContextMenu(null);
+      setSplitContextMenu(null);
+    };
+    if (contextMenu || splitContextMenu) {
+      document.addEventListener("click", handleClickOutside);
+      return () => document.removeEventListener("click", handleClickOutside);
     }
-  }, [contextMenu]);
+  }, [contextMenu, splitContextMenu]);
 
   const togglePlay = () => {
     const newIsPlaying = !isPlaying;
@@ -409,13 +413,15 @@ export default function EditPage() {
       // First, sync all videos to current time (applying cut offsets)
       // Validate currentTime before syncing
       if (!isFinite(currentTime) || currentTime < 0) {
-        console.error(`Invalid currentTime in togglePlay: ${currentTime}, resetting to 0`);
+        console.error(
+          `Invalid currentTime in togglePlay: ${currentTime}, resetting to 0`
+        );
         setCurrentTime(0);
         syncAllVideosToTime(0);
       } else {
         syncAllVideosToTime(currentTime);
       }
-      
+
       // Small delay to ensure seeking completes before playing
       setTimeout(() => {
         // Then start playing all videos
@@ -471,68 +477,85 @@ export default function EditPage() {
   };
 
   // Sync all videos to a specific time, applying cut offsets (videos start from their offset point)
-  const syncAllVideosToTime = useCallback((time: number) => {
-    // Validate input time
-    if (!isFinite(time) || time < 0) {
-      console.error(`Invalid time value: ${time}`);
-      return;
-    }
-    
-    console.log(`Syncing all videos to time: ${time}s with cut offsets`);
-    Object.entries(videoRefs.current).forEach(([recordingId, video]) => {
-      if (video) {
-        // Apply cut offset - video time = timeline time + its starting offset
-        const offset = syncOffsets[recordingId] || 0;
-        
-        // Validate offset
-        if (!isFinite(offset)) {
-          console.error(`Invalid offset for video ${recordingId}: ${offset}`);
-          return;
-        }
-        
-        const videoTime = time + offset;
-        
-        // Validate final video time
-        if (!isFinite(videoTime) || videoTime < 0) {
-          console.error(`Invalid video time for ${recordingId}: ${videoTime} (time: ${time}, offset: ${offset})`);
-          return;
-        }
-        
-        // Ensure video time doesn't exceed video duration
-        if (video.duration && videoTime > video.duration) {
-          console.warn(`Video time ${videoTime}s exceeds duration ${video.duration}s for ${recordingId}, clamping to duration`);
-          video.currentTime = video.duration;
-        } else {
-          video.currentTime = videoTime;
-        }
-        
-        console.log(`Video ${recordingId}: timeline ${time}s -> video time ${videoTime}s (cut offset: ${offset}s)`);
+  const syncAllVideosToTime = useCallback(
+    (time: number) => {
+      // Validate input time
+      if (!isFinite(time) || time < 0) {
+        console.error(`Invalid time value: ${time}`);
+        return;
       }
-    });
-  }, [syncOffsets]);
 
-  // Check if current time is in any focus range and update focused video
+      console.log(`Syncing all videos to time: ${time}s with cut offsets`);
+      Object.entries(videoRefs.current).forEach(([recordingId, video]) => {
+        if (video) {
+          // Apply cut offset - video time = timeline time + its starting offset
+          const offset = syncOffsets[recordingId] || 0;
+
+          // Validate offset
+          if (!isFinite(offset)) {
+            console.error(`Invalid offset for video ${recordingId}: ${offset}`);
+            return;
+          }
+
+          const videoTime = time + offset;
+
+          // Validate final video time
+          if (!isFinite(videoTime) || videoTime < 0) {
+            console.error(
+              `Invalid video time for ${recordingId}: ${videoTime} (time: ${time}, offset: ${offset})`
+            );
+            return;
+          }
+
+          // Ensure video time doesn't exceed video duration
+          if (video.duration && videoTime > video.duration) {
+            console.warn(
+              `Video time ${videoTime}s exceeds duration ${video.duration}s for ${recordingId}, clamping to duration`
+            );
+            video.currentTime = video.duration;
+          } else {
+            video.currentTime = videoTime;
+          }
+
+          console.log(
+            `Video ${recordingId}: timeline ${time}s -> video time ${videoTime}s (cut offset: ${offset}s)`
+          );
+        }
+      });
+    },
+    [syncOffsets]
+  );
+
+  // Check if current time is in a section with focus and update focused video
   const checkFocusState = useCallback(() => {
-    const activeFocusRange = zoomRanges.find(
-      (range) => currentTime >= range.startTime && currentTime <= range.endTime
+    // Find the current video section
+    const currentSection = videoSections.find(
+      (section) =>
+        currentTime >= section.startTime &&
+        currentTime < section.endTime &&
+        !section.isDeleted
     );
 
-    if (activeFocusRange) {
-      if (focusedVideo !== activeFocusRange.focusOn) {
+    if (currentSection && currentSection.focusedParticipantId) {
+      // This section has a focus - apply it
+      if (focusedVideo !== currentSection.focusedParticipantId) {
         console.log(
-          `Entering focus mode: ${activeFocusRange.focusOn} at time ${currentTime}s`
+          `Entering section focus mode: ${
+            currentSection.focusedParticipantId
+          } at time ${currentTime}s (section ${currentSection.startTime.toFixed(
+            1
+          )}s-${currentSection.endTime.toFixed(1)}s)`
         );
-        setFocusedVideo(activeFocusRange.focusOn);
+        setFocusedVideo(currentSection.focusedParticipantId);
       }
     } else {
+      // No section focus or in deleted section - exit focus mode
       if (focusedVideo !== null) {
-        console.log(
-          `Exiting focus mode at time ${currentTime}s`
-        );
+        console.log(`Exiting section focus mode at time ${currentTime}s`);
         setFocusedVideo(null);
       }
     }
-  }, [currentTime, zoomRanges, focusedVideo]);
+  }, [currentTime, videoSections, focusedVideo]);
 
   // Monitor time changes to handle focus transitions
   useEffect(() => {
@@ -541,30 +564,34 @@ export default function EditPage() {
 
   // Auto-save edit state when sections change
   const saveCurrentEditState = useCallback(async () => {
-    console.log('🔄 saveCurrentEditState called', { 
+    console.log("🔄 saveCurrentEditState called", {
       sectionsLength: videoSections.length,
-      zoomRangesLength: zoomRanges.length,
       splitPointsLength: splitPoints.length,
       roomId,
-      hasDeletedSections: videoSections.filter(s => s.isDeleted).length 
-    })
-    
+      hasDeletedSections: videoSections.filter((s) => s.isDeleted).length,
+      sectionsWithFocus: videoSections.filter((s) => s.focusedParticipantId)
+        .length,
+    });
+
     if (videoSections.length > 0 && roomId && sectionsLoaded) {
       try {
-        console.log('💾 Attempting to save edit state...')
+        console.log("💾 Attempting to save edit state...");
         const result = await saveEditState(roomId, {
           videoSections,
-          zoomRanges,
-          splitPoints
-        })
-        console.log('✅ Edit state saved successfully:', result)
+          zoomRanges: [], // Empty - focus now in videoSections
+          splitPoints,
+        });
+        console.log("✅ Edit state saved successfully:", result);
       } catch (error) {
-        console.error('❌ Failed to auto-save edit state:', error)
+        console.error("❌ Failed to auto-save edit state:", error);
       }
     } else {
-      console.log('⚠️ Not saving: insufficient data', { sectionsLength: videoSections.length, roomId })
+      console.log("⚠️ Not saving: insufficient data", {
+        sectionsLength: videoSections.length,
+        roomId,
+      });
     }
-  }, [videoSections, zoomRanges, splitPoints, roomId, saveEditState, sectionsLoaded])
+  }, [videoSections, splitPoints, roomId, saveEditState, sectionsLoaded]);
 
   // Update real duration when videos are loaded
   useEffect(() => {
@@ -575,7 +602,7 @@ export default function EditPage() {
   useEffect(() => {
     if (videoSections.length > 0 && sectionsLoaded && roomId) {
       const timeoutId = setTimeout(() => {
-        console.log('🔄 Auto-save triggered by videoSections change');
+        console.log("🔄 Auto-save triggered by videoSections change");
         saveCurrentEditState();
       }, 500);
 
@@ -622,14 +649,8 @@ export default function EditPage() {
 
   const currentCaptions = getCurrentCaptions();
 
-  // Zoom system functions
-  const handleParticipantFocus = (recordingId: string) => {
-    setSelectedFocus(recordingId);
-    if (!isSelectingZoomRange) {
-      setIsSelectingZoomRange(true);
-      setZoomRangeStart(null); // Reset to null, will be set on first click
-    }
-  };
+  // Legacy functions (to be removed)
+  // TODO: Remove these functions after migration complete
 
   // Handle regular timeline clicks (seeking or splitting)
   const handleTimelineClick = (event: React.MouseEvent<HTMLDivElement>) => {
@@ -637,10 +658,12 @@ export default function EditPage() {
     const clickX = event.clientX - rect.left;
     const percentage = clickX / rect.width;
     const clickTime = percentage * duration;
-    
+
     // Validate click time before proceeding
     if (!isFinite(clickTime) || clickTime < 0 || clickTime > duration) {
-      console.error(`Invalid click time: ${clickTime} (percentage: ${percentage}, duration: ${duration})`);
+      console.error(
+        `Invalid click time: ${clickTime} (percentage: ${percentage}, duration: ${duration})`
+      );
       return;
     }
 
@@ -650,15 +673,18 @@ export default function EditPage() {
     } else {
       // Normal mode - seek video
       // Check if clicking on a deleted section
-      const clickedSection = videoSections.find(section => 
-        clickTime >= section.startTime && clickTime < section.endTime
+      const clickedSection = videoSections.find(
+        (section) =>
+          clickTime >= section.startTime && clickTime < section.endTime
       );
-      
+
       if (clickedSection && clickedSection.isDeleted) {
-        console.log('Cannot seek to deleted section, finding nearest available time');
+        console.log(
+          "Cannot seek to deleted section, finding nearest available time"
+        );
         // Find nearest non-deleted section
-        const availableSections = videoSections.filter(s => !s.isDeleted);
-        
+        const availableSections = videoSections.filter((s) => !s.isDeleted);
+
         if (availableSections.length > 0) {
           // Find closest available section
           const closest = availableSections.reduce((prev, curr) => {
@@ -672,7 +698,7 @@ export default function EditPage() {
             );
             return currDist < prevDist ? curr : prev;
           });
-          
+
           // Seek to start of closest section
           const seekTime = closest.startTime;
           if (isFinite(seekTime) && seekTime >= 0) {
@@ -690,118 +716,7 @@ export default function EditPage() {
     }
   };
 
-  // Handle focus timeline mouse events (for drag selection)
-  const handleFocusTimelineMouseDown = (
-    event: React.MouseEvent<HTMLDivElement>
-  ) => {
-    const rect = event.currentTarget.getBoundingClientRect();
-    const clickX = event.clientX - rect.left;
-    const percentage = clickX / rect.width;
-    const clickTime = percentage * duration;
-
-    if (isSelectingZoomRange && selectedFocus) {
-      // Start drag selection
-      setZoomRangeStart(clickTime);
-      setDragCurrentTime(clickTime);
-      setIsDragging(true);
-    } else {
-      // Normal seeking - check for deleted sections
-      const clickedSection = videoSections.find(section => 
-        clickTime >= section.startTime && clickTime < section.endTime
-      );
-      
-      if (clickedSection && clickedSection.isDeleted) {
-        console.log('Cannot seek to deleted section on focus timeline');
-        return; // Don't seek to deleted sections
-      }
-      
-      setCurrentTime(clickTime);
-      syncAllVideosToTime(clickTime);
-    }
-  };
-
-  const handleFocusTimelineMouseMove = (
-    event: React.MouseEvent<HTMLDivElement>
-  ) => {
-    if (!isDragging || !isSelectingZoomRange) return;
-
-    const rect = event.currentTarget.getBoundingClientRect();
-    const clickX = event.clientX - rect.left;
-    const percentage = clickX / rect.width;
-    const clickTime = percentage * duration;
-
-    setDragCurrentTime(clickTime);
-  };
-
-  const handleFocusTimelineMouseUp = (
-    event: React.MouseEvent<HTMLDivElement>
-  ) => {
-    if (
-      !isDragging ||
-      !isSelectingZoomRange ||
-      !zoomRangeStart ||
-      !selectedFocus
-    )
-      return;
-
-    const rect = event.currentTarget.getBoundingClientRect();
-    const clickX = event.clientX - rect.left;
-    const percentage = clickX / rect.width;
-    const endTime = percentage * duration;
-
-    // Complete zoom range selection
-    const startTime = Math.min(zoomRangeStart, endTime);
-    const finalEndTime = Math.max(zoomRangeStart, endTime);
-
-    if (finalEndTime - startTime >= 1) {
-      // Minimum 1 second range
-      const participantIndex =
-        editData?.recordings.findIndex((r) => r.id === selectedFocus) || 0;
-      const newZoomRange: ZoomRange = {
-        id: `zoom-${Date.now()}-${Math.random().toString(36).substring(2, 11)}`,
-        startTime,
-        endTime: finalEndTime,
-        focusOn: selectedFocus,
-        participantIndex: participantIndex + 1,
-        aiGenerated: false, // Mark as user-created
-        type: 'conversation' // Default type for user-created segments
-      };
-
-      setZoomRanges((prev) => {
-        console.log('➕ Adding new focus segment:', newZoomRange)
-        return [...prev, newZoomRange]
-      });
-      // Auto-save will be triggered by useEffect when zoomRanges changes
-    }
-
-    // Reset selection state
-    setIsSelectingZoomRange(false);
-    setZoomRangeStart(null);
-    setSelectedFocus("");
-    setIsDragging(false);
-    setDragCurrentTime(null);
-  };
-
-  const removeZoomRange = (id: string) => {
-    setZoomRanges((prev) => {
-      console.log('➖ Removing focus segment with id:', id)
-      return prev.filter((range) => range.id !== id)
-    });
-    // Auto-save will be triggered by useEffect when zoomRanges changes
-  };
-
-  const clearAllZoomRanges = () => {
-    setZoomRanges([]);
-    // Auto-save will be triggered by useEffect when zoomRanges changes
-  };
-
-  const cancelZoomSelection = () => {
-    setIsSelectingZoomRange(false);
-    setZoomRangeStart(null);
-    setSelectedFocus("");
-    setIsDragging(false);
-    setDragCurrentTime(null);
-  };
+  // Legacy focus handlers removed - focus is now part of video sections
 
   const handleVideoError = (recordingId: string) => {
     setVideoErrors((prev) => new Set(prev).add(recordingId));
@@ -824,70 +739,75 @@ export default function EditPage() {
   // Split/Section functions
   const toggleSplitMode = () => {
     setIsSplitMode(!isSplitMode);
-    console.log(`Split mode ${!isSplitMode ? 'enabled' : 'disabled'}`);
+    console.log(`Split mode ${!isSplitMode ? "enabled" : "disabled"}`);
   };
 
   const createSplitAtTime = (time: number) => {
     // Don't create split at exact start or end
     if (time <= 0 || time >= duration) return;
-    
+
     // Don't create duplicate splits
     if (splitPoints.includes(time)) return;
-    
+
     // Add new split point and sort
     const newSplitPoints = [...splitPoints, time].sort((a, b) => a - b);
     setSplitPoints(newSplitPoints);
-    
+
     // Recreate sections based on split points
     const newSections: VideoSection[] = [];
     const allPoints = [0, ...newSplitPoints, duration];
-    
+
     for (let i = 0; i < allPoints.length - 1; i++) {
       const start = allPoints[i];
       const end = allPoints[i + 1];
-      
+
       // Check if this section already exists (exact match)
-      const existingSection = videoSections.find(s => 
-        Math.abs(s.startTime - start) < 0.1 && Math.abs(s.endTime - end) < 0.1
+      const existingSection = videoSections.find(
+        (s) =>
+          Math.abs(s.startTime - start) < 0.1 && Math.abs(s.endTime - end) < 0.1
       );
-      
+
       if (existingSection) {
         // Keep existing section as-is
         newSections.push(existingSection);
       } else {
         // This is a new section created by splitting
         // Find the original section that contained this time range
-        const originalSection = videoSections.find(s => 
-          start >= s.startTime && end <= s.endTime && 
-          (s.endTime - s.startTime) > (end - start) // Make sure it's larger (being split)
+        const originalSection = videoSections.find(
+          (s) =>
+            start >= s.startTime &&
+            end <= s.endTime &&
+            s.endTime - s.startTime > end - start // Make sure it's larger (being split)
         );
-        
+
         // Inherit properties from the original section being split
         newSections.push({
           id: `section-${start}-${end}`,
           startTime: start,
           endTime: end,
           isDeleted: originalSection?.isDeleted || false,
-          playbackSpeed: originalSection?.playbackSpeed || 1.0
+          playbackSpeed: originalSection?.playbackSpeed || 1.0,
         });
-        
-        console.log(`📄 Created new section ${start}-${end} inheriting from original: deleted=${originalSection?.isDeleted}, speed=${originalSection?.playbackSpeed}x`);
+
+        console.log(
+          `📄 Created new section ${start}-${end} inheriting from original: deleted=${originalSection?.isDeleted}, speed=${originalSection?.playbackSpeed}x`
+        );
       }
     }
-    
+
     setVideoSections(newSections);
-    console.log(`Created split at ${time}s. Total sections: ${newSections.length}`);
+    console.log(
+      `Created split at ${time}s. Total sections: ${newSections.length}`
+    );
     // Auto-save will be triggered by useEffect when videoSections changes
   };
 
   // Manual save trigger - only call when user makes actual modifications
 
   const deleteSection = (sectionId: string) => {
-    setVideoSections(prev => 
-      prev.map(section => 
-        section.id === sectionId 
-          ? { ...section, isDeleted: true }
-          : section
+    setVideoSections((prev) =>
+      prev.map((section) =>
+        section.id === sectionId ? { ...section, isDeleted: true } : section
       )
     );
     setContextMenu(null);
@@ -896,11 +816,9 @@ export default function EditPage() {
   };
 
   const restoreSection = (sectionId: string) => {
-    setVideoSections(prev => 
-      prev.map(section => 
-        section.id === sectionId 
-          ? { ...section, isDeleted: false }
-          : section
+    setVideoSections((prev) =>
+      prev.map((section) =>
+        section.id === sectionId ? { ...section, isDeleted: false } : section
       )
     );
     setContextMenu(null);
@@ -909,14 +827,44 @@ export default function EditPage() {
   };
 
   const setPlaybackSpeed = (sectionId: string, speed: number) => {
-    setVideoSections(prev => {
-      const updated = prev.map(section => 
-        section.id === sectionId 
+    setVideoSections((prev) => {
+      const updated = prev.map((section) =>
+        section.id === sectionId
           ? { ...section, playbackSpeed: speed }
           : section
       );
       console.log(`Set playback speed for section ${sectionId}: ${speed}x`);
-      console.log('📝 Updated sections:', updated.map(s => ({ id: s.id, speed: s.playbackSpeed, deleted: s.isDeleted })));
+      console.log(
+        "📝 Updated sections:",
+        updated.map((s) => ({
+          id: s.id,
+          speed: s.playbackSpeed,
+          deleted: s.isDeleted,
+        }))
+      );
+      return updated;
+    });
+    setContextMenu(null);
+    // Auto-save will be triggered by useEffect when videoSections changes
+  };
+
+  const setSectionFocus = (sectionId: string, participantId?: string) => {
+    setVideoSections((prev) => {
+      const updated = prev.map((section) =>
+        section.id === sectionId
+          ? { ...section, focusedParticipantId: participantId }
+          : section
+      );
+      console.log(
+        `Set focus for section ${sectionId}: ${participantId || "none"}`
+      );
+      console.log(
+        "📝 Updated sections:",
+        updated.map((s) => ({
+          id: s.id,
+          focus: s.focusedParticipantId || "none",
+        }))
+      );
       return updated;
     });
     setContextMenu(null);
@@ -925,66 +873,202 @@ export default function EditPage() {
 
   // Debug function to test direct API call
   const debugSaveSection = async (sectionId: string, speed: number) => {
-    const section = videoSections.find(s => s.id === sectionId);
+    const section = videoSections.find((s) => s.id === sectionId);
     if (!section) return;
 
     const testSection = {
       ...section,
-      playbackSpeed: speed
+      playbackSpeed: speed,
     };
 
-    console.log('🚨 DEBUG: Testing direct API call with section:', testSection);
+    console.log("🚨 DEBUG: Testing direct API call with section:", testSection);
 
     try {
-      const response = await fetch('/api/debug-save', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+      const response = await fetch("/api/debug-save", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           roomId,
-          testSection
-        })
+          testSection,
+        }),
       });
 
       const result = await response.json();
-      console.log('🚨 DEBUG API Response:', result);
+      console.log("🚨 DEBUG API Response:", result);
     } catch (error) {
-      console.error('🚨 DEBUG API Error:', error);
+      console.error("🚨 DEBUG API Error:", error);
     }
   };
 
   const resetSplits = () => {
     setSplitPoints([]);
-    setVideoSections([{
-      id: `section-0-${duration}`,
-      startTime: 0,
-      endTime: duration,
-      isDeleted: false,
-      playbackSpeed: 1.0
-    }]);
-    console.log('All splits reset');
+    setVideoSections([
+      {
+        id: `section-0-${duration}`,
+        startTime: 0,
+        endTime: duration,
+        isDeleted: false,
+        playbackSpeed: 1.0,
+      },
+    ]);
+    console.log("All splits reset");
+  };
+
+  // Split point drag and drop functions
+  const handleSplitMouseDown = (
+    event: React.MouseEvent,
+    splitIndex: number
+  ) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setIsDraggingSplit(true);
+    setDraggingSplitIndex(splitIndex);
+    console.log(
+      `Started dragging split ${splitIndex} at ${splitPoints[splitIndex]}s`
+    );
+  };
+
+  const handleSplitMouseMove = (event: React.MouseEvent<HTMLDivElement>) => {
+    if (!isDraggingSplit || draggingSplitIndex === null) return;
+
+    const rect = event.currentTarget.getBoundingClientRect();
+    const clickX = event.clientX - rect.left;
+    const percentage = clickX / rect.width;
+    const newTime = Math.max(
+      0.1,
+      Math.min(duration - 0.1, percentage * duration)
+    );
+
+    // Update the split point position
+    const newSplitPoints = [...splitPoints];
+    newSplitPoints[draggingSplitIndex] = newTime;
+    setSplitPoints(newSplitPoints.sort((a, b) => a - b));
+  };
+
+  const handleSplitMouseUp = () => {
+    if (isDraggingSplit && draggingSplitIndex !== null) {
+      console.log(
+        `Finished dragging split to ${splitPoints[draggingSplitIndex]}s`
+      );
+      // Recreate sections with new split point
+      recreateSectionsFromSplits();
+    }
+    setIsDraggingSplit(false);
+    setDraggingSplitIndex(null);
+  };
+
+  const recreateSectionsFromSplits = () => {
+    const newSections: VideoSection[] = [];
+    const allPoints = [0, ...splitPoints, duration];
+
+    for (let i = 0; i < allPoints.length - 1; i++) {
+      const start = allPoints[i];
+      const end = allPoints[i + 1];
+
+      // Try to find exact match first
+      const existingSection = videoSections.find(
+        (s) =>
+          Math.abs(s.startTime - start) < 0.1 && Math.abs(s.endTime - end) < 0.1
+      );
+
+      if (existingSection) {
+        // Perfect match - keep the existing section
+        newSections.push({
+          ...existingSection,
+          startTime: start, // Update to exact new times
+          endTime: end,
+        });
+      } else {
+        // No exact match - find the section that contributes most to this range
+        const overlappingSections = videoSections.filter(
+          (s) => start < s.endTime && end > s.startTime
+        );
+
+        let bestSection: VideoSection | undefined;
+        let maxOverlap = 0;
+
+        // Find the section with maximum overlap
+        for (const section of overlappingSections) {
+          const overlapStart = Math.max(start, section.startTime);
+          const overlapEnd = Math.min(end, section.endTime);
+          const overlapDuration = Math.max(0, overlapEnd - overlapStart);
+
+          if (overlapDuration > maxOverlap) {
+            maxOverlap = overlapDuration;
+            bestSection = section;
+          }
+        }
+
+        // Create new section inheriting from the section with most overlap
+        newSections.push({
+          id: `section-${start.toFixed(3)}-${end.toFixed(3)}`,
+          startTime: start,
+          endTime: end,
+          isDeleted: bestSection?.isDeleted || false,
+          playbackSpeed: bestSection?.playbackSpeed || 1.0,
+          focusedParticipantId: bestSection?.focusedParticipantId,
+        });
+
+        console.log(
+          `Created section ${start.toFixed(1)}s-${end.toFixed(
+            1
+          )}s inheriting from section with ${maxOverlap.toFixed(1)}s overlap`
+        );
+      }
+    }
+
+    console.log(
+      `Recreated ${newSections.length} sections from splits:`,
+      newSections.map(
+        (s) =>
+          `${s.startTime.toFixed(1)}-${s.endTime.toFixed(1)} (${
+            s.playbackSpeed
+          }x, focus: ${s.focusedParticipantId ? "yes" : "no"})`
+      )
+    );
+    setVideoSections(newSections);
+  };
+
+  const deleteSplitPoint = (splitIndex: number) => {
+    const splitTime = splitPoints[splitIndex];
+    const newSplitPoints = splitPoints.filter(
+      (_, index) => index !== splitIndex
+    );
+    setSplitPoints(newSplitPoints);
+
+    console.log(`Deleted split point at ${splitTime}s`);
+    recreateSectionsFromSplits();
+    setSplitContextMenu(null);
+  };
+
+  const handleSplitContextMenu = (
+    event: React.MouseEvent,
+    splitIndex: number
+  ) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setSplitContextMenu({
+      x: event.clientX,
+      y: event.clientY,
+      splitIndex,
+    });
   };
 
   const renderVideoCard = (recording: Recording, index: number) => {
-    const isSelected = selectedFocus === recording.id;
-    const isInZoomRange = zoomRanges.some(
-      (range) =>
-        range.focusOn === recording.id &&
-        currentTime >= range.startTime &&
-        currentTime <= range.endTime
+    // Check if current section has focus on this participant
+    const currentSection = videoSections.find(
+      (section) =>
+        currentTime >= section.startTime && currentTime < section.endTime
     );
+    const isInFocus = currentSection?.focusedParticipantId === recording.id;
     const hasVideoError = videoErrors.has(recording.id);
 
     return (
       <div
         key={recording.id}
-        className={`relative bg-black rounded-lg overflow-hidden w-full h-full cursor-pointer transition-all duration-200 ${
-          isSelected
-            ? "ring-4 ring-blue-500"
-            : isInZoomRange
-            ? "ring-2 ring-green-400"
-            : ""
+        className={`relative bg-black rounded-lg overflow-hidden w-full h-full transition-all duration-200 ${
+          isInFocus ? "ring-2 ring-purple-400" : ""
         }`}
-        onClick={() => handleParticipantFocus(recording.id)}
       >
         <video
           ref={(el) => {
@@ -1002,85 +1086,117 @@ export default function EditPage() {
             console.log(
               `Video loaded: ${recording.id}, duration: ${video.duration}s`
             );
-            
-            // Track that this video has loaded and store its real duration
-            setVideosLoaded(prev => new Set(prev).add(recording.id));
-            setRealVideoDurations(prev => ({ ...prev, [recording.id]: video.duration }));
-            
+
+            // Track that this video has loaded
+            setVideosLoaded((prev) => new Set(prev).add(recording.id));
+
             // Apply initial cut offset - start video from its offset point
             const offset = syncOffsets[recording.id] || 0;
             const initialVideoTime = currentTime + offset;
-            
+
             // Validate before setting currentTime
             if (isFinite(initialVideoTime) && initialVideoTime >= 0) {
               // Clamp to video duration if necessary
-              const clampedTime = Math.min(initialVideoTime, video.duration || initialVideoTime);
+              const clampedTime = Math.min(
+                initialVideoTime,
+                video.duration || initialVideoTime
+              );
               video.currentTime = clampedTime;
-              console.log(`Video ${recording.id}: applying cut offset ${offset}s, starting at ${clampedTime}s`);
+              console.log(
+                `Video ${recording.id}: applying cut offset ${offset}s, starting at ${clampedTime}s`
+              );
             } else {
-              console.error(`Invalid initial video time for ${recording.id}: ${initialVideoTime} (currentTime: ${currentTime}, offset: ${offset})`);
+              console.error(
+                `Invalid initial video time for ${recording.id}: ${initialVideoTime} (currentTime: ${currentTime}, offset: ${offset})`
+              );
               video.currentTime = 0; // Fallback to start
             }
           }}
           onTimeUpdate={(e) => {
             const video = e.currentTarget;
             // Update current time from the focused video, or first video if no focus
-            const masterVideoId = focusedVideo || editData?.recordings[0].id;
+            const masterVideoId = focusedVideo || editData?.recordings[0]?.id;
             if (recording.id === masterVideoId) {
               // Convert video time back to timeline time (remove the cut offset)
               const videoTime = video.currentTime;
               const offset = syncOffsets[recording.id] || 0;
-              
+
               // Validate values before calculation
               if (!isFinite(videoTime) || !isFinite(offset)) {
-                console.error(`Invalid values in onTimeUpdate for ${recording.id}: videoTime=${videoTime}, offset=${offset}`);
+                console.error(
+                  `Invalid values in onTimeUpdate for ${recording.id}: videoTime=${videoTime}, offset=${offset}`
+                );
                 return;
               }
-              
+
               const timelineTime = videoTime - offset;
-              
+
               // Validate timeline time before setting
               if (isFinite(timelineTime) && timelineTime >= 0) {
                 setCurrentTime(timelineTime);
               } else {
-                console.error(`Invalid timeline time for ${recording.id}: ${timelineTime} (videoTime: ${videoTime}, offset: ${offset})`);
+                console.error(
+                  `Invalid timeline time for ${recording.id}: ${timelineTime} (videoTime: ${videoTime}, offset: ${offset})`
+                );
                 return;
               }
-              
+
               // Check current section and apply playback speed
-              const currentSection = videoSections.find(section => 
-                timelineTime >= section.startTime && timelineTime < section.endTime
+              const currentSection = videoSections.find(
+                (section) =>
+                  timelineTime >= section.startTime &&
+                  timelineTime < section.endTime
               );
-              
+
               // Apply playback speed for current section
               if (currentSection && !currentSection.isDeleted) {
                 Object.values(videoRefs.current).forEach((video) => {
-                  if (video && video.playbackRate !== currentSection.playbackSpeed) {
+                  if (
+                    video &&
+                    video.playbackRate !== currentSection.playbackSpeed
+                  ) {
                     video.playbackRate = currentSection.playbackSpeed;
-                    console.log(`Applied playback speed ${currentSection.playbackSpeed}x to section ${currentSection.startTime.toFixed(1)}s-${currentSection.endTime.toFixed(1)}s`);
+                    console.log(
+                      `Applied playback speed ${
+                        currentSection.playbackSpeed
+                      }x to section ${currentSection.startTime.toFixed(
+                        1
+                      )}s-${currentSection.endTime.toFixed(1)}s`
+                    );
                   }
                 });
               }
-              
+
               if (currentSection && currentSection.isDeleted && isPlaying) {
                 // Find next non-deleted section
                 const nextSection = videoSections
-                  .filter(section => !section.isDeleted && section.startTime > timelineTime)
+                  .filter(
+                    (section) =>
+                      !section.isDeleted && section.startTime > timelineTime
+                  )
                   .sort((a, b) => a.startTime - b.startTime)[0];
-                
+
                 if (nextSection) {
                   const jumpTime = nextSection.startTime;
                   if (isFinite(jumpTime) && jumpTime >= 0) {
-                    console.log(`Skipping deleted section ${currentSection.startTime.toFixed(1)}s-${currentSection.endTime.toFixed(1)}s, jumping to ${jumpTime.toFixed(1)}s`);
+                    console.log(
+                      `Skipping deleted section ${currentSection.startTime.toFixed(
+                        1
+                      )}s-${currentSection.endTime.toFixed(
+                        1
+                      )}s, jumping to ${jumpTime.toFixed(1)}s`
+                    );
                     syncAllVideosToTime(jumpTime);
                   } else {
                     console.error(`Invalid jump time: ${jumpTime}`);
                   }
                 } else {
                   // No more sections, pause video
-                  console.log('Reached end of non-deleted sections, pausing video');
+                  console.log(
+                    "Reached end of non-deleted sections, pausing video"
+                  );
                   setIsPlaying(false);
-                  Object.values(videoRefs.current).forEach(v => v?.pause());
+                  Object.values(videoRefs.current).forEach((v) => v?.pause());
                 }
               }
             }
@@ -1190,11 +1306,14 @@ export default function EditPage() {
           <div className="flex items-center space-x-2">
             {Object.keys(syncOffsets).length > 0 && (
               <div className="text-sm text-green-600 bg-green-50 px-3 py-1 rounded-full">
-                ✂️ Video tagliati automaticamente ({Object.keys(syncOffsets).length} offset applicati)
-                {editData?.recordings?.some(r => r.recording_started_at) ? '' : ' - usando created_at'}
+                ✂️ Video tagliati automaticamente (
+                {Object.keys(syncOffsets).length} offset applicati)
+                {editData?.recordings?.some((r) => r.recording_started_at)
+                  ? ""
+                  : " - usando created_at"}
               </div>
             )}
-            
+
             {/* Export Button */}
             <Button
               onClick={() => setShowExportModal(true)}
@@ -1202,9 +1321,9 @@ export default function EditPage() {
               disabled={!editData || isExporting}
             >
               <Download className="h-4 w-4 mr-2" />
-              {isExporting ? 'Esportando...' : 'Esporta Video'}
+              {isExporting ? "Esportando..." : "Esporta Video"}
             </Button>
-            
+
             <Button
               onClick={fetchEditData}
               variant="outline"
@@ -1323,7 +1442,9 @@ export default function EditPage() {
                   onClick={toggleSplitMode}
                   size="sm"
                   variant={isSplitMode ? "default" : "outline"}
-                  className={isSplitMode ? "bg-orange-600 hover:bg-orange-700" : ""}
+                  className={
+                    isSplitMode ? "bg-orange-600 hover:bg-orange-700" : ""
+                  }
                 >
                   {isSplitMode ? "🔪 Split Mode ON" : "🔪 Split Mode"}
                 </Button>
@@ -1336,8 +1457,16 @@ export default function EditPage() {
                   Reset Splits
                 </Button>
                 <div className="text-sm text-gray-500 flex items-center gap-2">
-                  <span>{splitPoints.length} splits, {videoSections.filter(s => !s.isDeleted).length}/{videoSections.length} sezioni</span>
-                  {isSaving && <span className="text-xs text-blue-500">💾 Salvando...</span>}
+                  <span>
+                    {splitPoints.length} splits,{" "}
+                    {videoSections.filter((s) => !s.isDeleted).length}/
+                    {videoSections.length} sezioni
+                  </span>
+                  {isSaving && (
+                    <span className="text-xs text-blue-500">
+                      💾 Salvando...
+                    </span>
+                  )}
                   {lastSaved && !isSaving && (
                     <span className="text-xs text-green-500">
                       ✅ Salvato {lastSaved.toLocaleTimeString()}
@@ -1359,7 +1488,18 @@ export default function EditPage() {
                   {isSplitMode ? "Timeline - Click per fare split" : "Timeline"}
                 </span>
                 <div className="text-xs text-gray-500 flex items-center gap-4">
-                  <span>Durata finale: {((videoSections.filter(s => !s.isDeleted).reduce((acc, s) => acc + (s.endTime - s.startTime), 0)) / 60).toFixed(1)} min</span>
+                  <span>
+                    Durata finale:{" "}
+                    {(
+                      videoSections
+                        .filter((s) => !s.isDeleted)
+                        .reduce(
+                          (acc, s) => acc + (s.endTime - s.startTime),
+                          0
+                        ) / 60
+                    ).toFixed(1)}{" "}
+                    min
+                  </span>
                   <div className="flex items-center gap-2">
                     <div className="flex items-center gap-1">
                       <div className="w-3 h-3 bg-green-200 rounded-sm"></div>
@@ -1373,6 +1513,10 @@ export default function EditPage() {
                       <div className="w-3 h-3 bg-blue-200 rounded-sm"></div>
                       <span>&gt;1x</span>
                     </div>
+                    <div className="flex items-center gap-1">
+                      <div className="w-3 h-3 bg-purple-300 rounded-sm"></div>
+                      <span>🎯 Focus</span>
+                    </div>
                   </div>
                 </div>
               </div>
@@ -1381,39 +1525,61 @@ export default function EditPage() {
                   isSplitMode ? "bg-orange-100" : "bg-gray-200"
                 }`}
                 onClick={handleTimelineClick}
+                onMouseMove={handleSplitMouseMove}
+                onMouseUp={handleSplitMouseUp}
+                onMouseLeave={handleSplitMouseUp}
               >
                 {/* Render video sections */}
                 {videoSections.map((section) => (
                   <div
                     key={section.id}
                     className={`absolute top-0 h-full ${
-                      section.isDeleted 
-                        ? "bg-red-200 opacity-50" 
-                        : section.playbackSpeed !== 1.0 
-                          ? section.playbackSpeed < 1.0 
-                            ? "bg-orange-200" // Slow sections
-                            : "bg-blue-200"   // Fast sections
-                          : "bg-green-200"    // Normal speed sections
+                      section.isDeleted
+                        ? "bg-red-200 opacity-50"
+                        : section.focusedParticipantId
+                        ? "bg-purple-300" // Sections with focus
+                        : section.playbackSpeed !== 1.0
+                        ? section.playbackSpeed < 1.0
+                          ? "bg-orange-200" // Slow sections
+                          : "bg-blue-200" // Fast sections
+                        : "bg-green-200" // Normal speed sections
                     } border-l border-r border-gray-400`}
                     style={{
                       left: `${(section.startTime / duration) * 100}%`,
-                      width: `${((section.endTime - section.startTime) / duration) * 100}%`,
+                      width: `${
+                        ((section.endTime - section.startTime) / duration) * 100
+                      }%`,
                     }}
-                    title={`Section ${section.startTime.toFixed(1)}s - ${section.endTime.toFixed(1)}s${section.isDeleted ? " (DELETED)" : ` - Velocità: ${section.playbackSpeed}x`}`}
+                    title={`Section ${section.startTime.toFixed(
+                      1
+                    )}s - ${section.endTime.toFixed(1)}s${
+                      section.isDeleted
+                        ? " (DELETED)"
+                        : ` - Velocità: ${section.playbackSpeed}x${
+                            section.focusedParticipantId
+                              ? ` - Focus: Partecipante ${
+                                  editData?.recordings.findIndex(
+                                    (r) => r.id === section.focusedParticipantId
+                                  ) + 1 || "?"
+                                }`
+                              : " - Focus: 50/50"
+                          }`
+                    }`}
                     onContextMenu={(e) => {
                       e.preventDefault();
-                      
+
                       // Calculate if menu should open upward
                       const windowHeight = window.innerHeight;
                       const clickY = e.clientY;
                       const estimatedMenuHeight = 400; // Approximate menu height with speed options
-                      const shouldOpenUpward = clickY + estimatedMenuHeight > windowHeight;
-                      
+                      const shouldOpenUpward =
+                        clickY + estimatedMenuHeight > windowHeight;
+
                       setContextMenu({
                         x: e.clientX,
                         y: e.clientY,
                         sectionId: section.id,
-                        openUpward: shouldOpenUpward
+                        openUpward: shouldOpenUpward,
                       });
                     }}
                   >
@@ -1421,34 +1587,77 @@ export default function EditPage() {
                       <div className="absolute inset-0 flex items-center justify-center text-xs text-red-600 font-bold">
                         DELETED
                       </div>
-                    ) : section.playbackSpeed !== 1.0 ? (
+                    ) : (
                       <div className="absolute inset-0 flex items-center justify-center text-xs font-bold">
-                        <span className={`${
-                          section.playbackSpeed < 1.0 ? 'text-orange-700' : 'text-blue-700'
-                        }`}>
-                          {section.playbackSpeed}x
-                        </span>
+                        {section.focusedParticipantId ? (
+                          <span className="text-purple-700">
+                            🎯 P
+                            {editData?.recordings.findIndex(
+                              (r) => r.id === section.focusedParticipantId
+                            ) + 1}
+                            {section.playbackSpeed !== 1.0 && (
+                              <span className="ml-1 text-xs">
+                                {section.playbackSpeed}x
+                              </span>
+                            )}
+                          </span>
+                        ) : section.playbackSpeed !== 1.0 ? (
+                          <span
+                            className={`${
+                              section.playbackSpeed < 1.0
+                                ? "text-orange-700"
+                                : "text-blue-700"
+                            }`}
+                          >
+                            {section.playbackSpeed}x
+                          </span>
+                        ) : null}
                       </div>
-                    ) : null}
+                    )}
                   </div>
                 ))}
-                
-                {/* Split point markers */}
-                {splitPoints.map((point) => (
+
+                {/* Split point markers with interactive handles */}
+                {splitPoints.map((point, index) => (
                   <div
-                    key={`split-${point}`}
-                    className="absolute top-0 h-full w-0.5 bg-orange-600"
-                    style={{ left: `${(point / duration) * 100}%` }}
-                    title={`Split at ${point.toFixed(1)}s`}
-                  />
+                    key={`split-${point}-${index}`}
+                    className="absolute top-0 h-full"
+                    style={{
+                      left: `${(point / duration) * 100}%`,
+                      transform: "translateX(-50%)",
+                      zIndex: 20,
+                    }}
+                  >
+                    {/* Split line */}
+                    <div className="absolute w-0.5 h-full bg-red-500" />
+
+                    {/* Interactive handle (red circle) - positioned above the line */}
+                    <div
+                      className={`absolute w-4 h-4 bg-red-500 border-2 border-white rounded-full cursor-move shadow-lg hover:bg-red-600 transition-colors ${
+                        isDraggingSplit && draggingSplitIndex === index
+                          ? "scale-125 bg-red-600"
+                          : ""
+                      }`}
+                      style={{
+                        top: "-8px", // Position above the timeline bar
+                        left: "50%",
+                        transform: "translateX(-50%)",
+                      }}
+                      title={`Split at ${point.toFixed(
+                        1
+                      )}s - Drag to move, Right-click to delete`}
+                      onMouseDown={(e) => handleSplitMouseDown(e, index)}
+                      onContextMenu={(e) => handleSplitContextMenu(e, index)}
+                    />
+                  </div>
                 ))}
-                
+
                 {/* Current progress bar */}
                 <div
                   className="h-full bg-blue-600 bg-opacity-30 rounded-full"
                   style={{ width: `${(currentTime / duration) * 100}%` }}
                 />
-                
+
                 {/* Current time marker */}
                 <div
                   className="absolute top-0 h-full w-1 bg-blue-800 rounded z-10"
@@ -1457,193 +1666,9 @@ export default function EditPage() {
               </div>
             </div>
 
-            {/* Focus Controls */}
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-4">
-                  <span className="text-xs text-gray-400">Focus Timeline</span>
-                  {editData && editData.recordings.length > 0 && (
-                    <div className="flex gap-2">
-                      {editData.recordings.map((recording, index) => (
-                        <Button
-                          key={recording.id}
-                          onClick={() => handleParticipantFocus(recording.id)}
-                          size="sm"
-                          variant={
-                            selectedFocus === recording.id
-                              ? "default"
-                              : "outline"
-                          }
-                          className={`text-xs h-6 px-3 ${
-                            selectedFocus === recording.id
-                              ? "bg-blue-600 hover:bg-blue-700"
-                              : ""
-                          }`}
-                        >
-                          Partecipante {index + 1}
-                        </Button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-
-                <Button
-                  onClick={() => setShowZoomMenu(!showZoomMenu)}
-                  variant="ghost"
-                  size="sm"
-                  className="text-gray-400 hover:text-gray-600 h-6 w-6 p-0"
-                >
-                  <MoreHorizontal className="w-4 h-4" />
-                </Button>
-              </div>
-
-              {/* Focus Timeline Bar */}
-              <div
-                className="w-full h-8 bg-gray-200 rounded-full cursor-pointer relative"
-                onMouseDown={handleFocusTimelineMouseDown}
-                onMouseMove={handleFocusTimelineMouseMove}
-                onMouseUp={handleFocusTimelineMouseUp}
-              >
-                {/* Focus ranges */}
-                {zoomRanges.map((range) => (
-                  <div
-                    key={range.id}
-                    className={`absolute top-0 h-full rounded ${
-                      range.aiGenerated 
-                        ? 'bg-blue-400 bg-opacity-60 border-2 border-blue-500' 
-                        : 'bg-green-400 bg-opacity-50'
-                    }`}
-                    style={{
-                      left: `${(range.startTime / duration) * 100}%`,
-                      width: `${
-                        ((range.endTime - range.startTime) / duration) * 100
-                      }%`,
-                    }}
-                    title={`${range.aiGenerated ? '🤖 AI: ' : ''}Partecipante ${
-                      range.participantIndex + 1
-                    }: ${range.startTime.toFixed(1)}s - ${range.endTime.toFixed(
-                      1
-                    )}s${range.reason ? `\nMotivo: ${range.reason}` : ''}${
-                      range.confidence ? `\nFiducia: ${(range.confidence * 100).toFixed(0)}%` : ''
-                    }`}
-                  >
-                    {range.aiGenerated && (
-                      <div className="absolute -top-1 -right-1 text-xs">🤖</div>
-                    )}
-                  </div>
-                ))}
-
-                {/* Current selection range */}
-                {isSelectingZoomRange &&
-                  zoomRangeStart !== null &&
-                  dragCurrentTime !== null && (
-                    <div
-                      className="absolute top-0 h-full bg-blue-400 bg-opacity-30 rounded"
-                      style={{
-                        left: `${
-                          (Math.min(zoomRangeStart, dragCurrentTime) /
-                            duration) *
-                          100
-                        }%`,
-                        width: `${
-                          (Math.abs(dragCurrentTime - zoomRangeStart) /
-                            duration) *
-                          100
-                        }%`,
-                      }}
-                    />
-                  )}
-
-                <div
-                  className="h-full bg-gray-400 rounded-full"
-                  style={{ width: `${(currentTime / duration) * 100}%` }}
-                />
-                <div
-                  className="absolute top-0 h-full w-1 bg-gray-600 rounded"
-                  style={{ left: `${(currentTime / duration) * 100}%` }}
-                />
-              </div>
-
-              {/* Zoom Menu */}
-              {showZoomMenu && (
-                <div className="absolute right-4 mt-2 w-64 rounded-md shadow-lg bg-white ring-1 ring-black ring-opacity-5 z-10">
-                  <div className="py-1">
-                    {zoomRanges.length > 0 ? (
-                      <>
-                        {zoomRanges.map((range) => (
-                          <div
-                            key={range.id}
-                            className={`flex items-center justify-between px-4 py-2 hover:bg-gray-100 ${
-                              range.aiGenerated ? 'bg-blue-50' : ''
-                            }`}
-                          >
-                            <div className="flex-1">
-                              <div className="flex items-center gap-2">
-                                {range.aiGenerated && <span className="text-xs">🤖</span>}
-                                <span className="text-sm">
-                                  Partecipante {range.participantIndex + 1}:{" "}
-                                  {range.startTime.toFixed(1)}s -{" "}
-                                  {range.endTime.toFixed(1)}s
-                                </span>
-                              </div>
-                              {range.aiGenerated && range.reason && (
-                                <div className="text-xs text-gray-600 mt-1">
-                                  {range.reason}
-                                  {range.confidence && 
-                                    ` (${(range.confidence * 100).toFixed(0)}% fiducia)`
-                                  }
-                                </div>
-                              )}
-                            </div>
-                            <button
-                              onClick={() => removeZoomRange(range.id)}
-                              className="text-red-500 hover:text-red-700 text-sm ml-2"
-                            >
-                              Rimuovi
-                            </button>
-                          </div>
-                        ))}
-                        <div className="border-t border-gray-200" />
-                        <button
-                          className="w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
-                          onClick={clearAllZoomRanges}
-                        >
-                          Rimuovi Tutti
-                        </button>
-                      </>
-                    ) : (
-                      <div className="px-4 py-2 text-sm text-gray-500">
-                        Nessun range di focus creato
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )}
-
-              {/* Instructions */}
-              {isSelectingZoomRange && (
-                <div className="bg-blue-50 border border-blue-200 rounded p-2 mt-2">
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm text-blue-800">
-                      Clicca sulla focus timeline per completare il range per
-                      Partecipante{" "}
-                      {(editData?.recordings.findIndex(
-                        (r) => r.id === selectedFocus
-                      ) ?? -1) + 1}
-                    </span>
-                    <Button
-                      onClick={cancelZoomSelection}
-                      size="sm"
-                      variant="ghost"
-                      className="text-blue-600 hover:text-blue-800"
-                    >
-                      Annulla
-                    </Button>
-                  </div>
-                </div>
-              )}
-
-            </div>
+            {/* OLD Focus Controls - REMOVED
+            Focus is now integrated directly into video sections via context menu
+            */}
           </div>
         </div>
       </div>
@@ -1684,25 +1709,29 @@ export default function EditPage() {
       {contextMenu && (
         <div
           className={`fixed bg-white shadow-lg rounded-lg border py-2 z-50 transform transition-all duration-200 ${
-            contextMenu.openUpward ? 'origin-bottom' : 'origin-top'
+            contextMenu.openUpward ? "origin-bottom" : "origin-top"
           }`}
           style={{
             left: contextMenu.x,
-            ...(contextMenu.openUpward 
+            ...(contextMenu.openUpward
               ? { bottom: window.innerHeight - contextMenu.y + 10 } // Open upward with 10px margin
-              : { top: contextMenu.y } // Normal downward opening
-            ),
+              : { top: contextMenu.y }), // Normal downward opening
           }}
           onMouseLeave={() => setContextMenu(null)}
         >
           {(() => {
-            const section = videoSections.find(s => s.id === contextMenu.sectionId);
+            const section = videoSections.find(
+              (s) => s.id === contextMenu.sectionId
+            );
             if (!section) return null;
-            
+
             return (
               <div>
                 <div className="px-4 py-1 text-xs text-gray-500 border-b flex items-center justify-between">
-                  <span>Sezione {section.startTime.toFixed(1)}s - {section.endTime.toFixed(1)}s</span>
+                  <span>
+                    Sezione {section.startTime.toFixed(1)}s -{" "}
+                    {section.endTime.toFixed(1)}s
+                  </span>
                   {contextMenu.openUpward && (
                     <span className="text-xs text-gray-400">▲</span>
                   )}
@@ -1723,30 +1752,84 @@ export default function EditPage() {
                     <div className="px-4 py-1 text-xs text-gray-400 border-b">
                       Velocità: {section.playbackSpeed}x
                     </div>
-                    
+
                     {/* Speed options */}
                     <div className="border-b mb-1">
-                      <div className="px-3 py-1 text-xs text-gray-500">Velocità riproduzione:</div>
-                      {[0.25, 0.5, 0.75, 1.0, 1.1, 1.2, 1.3, 1.5, 2.0, 4.0].map((speed) => (
+                      <div className="px-3 py-1 text-xs text-gray-500">
+                        Velocità riproduzione:
+                      </div>
+                      {[0.25, 0.5, 0.75, 1.0, 1.1, 1.2, 1.3, 1.5, 2.0, 4.0].map(
+                        (speed) => (
+                          <button
+                            key={speed}
+                            className={`w-full px-4 py-1 text-left hover:bg-gray-100 text-sm ${
+                              section.playbackSpeed === speed
+                                ? "bg-blue-50 text-blue-600 font-medium"
+                                : "text-gray-700"
+                            }`}
+                            onClick={() => setPlaybackSpeed(section.id, speed)}
+                          >
+                            {speed === 1.0 ? "🎬" : speed < 1.0 ? "🐌" : "⚡"}{" "}
+                            {speed}x {speed === 1.0 ? "(normale)" : ""}
+                          </button>
+                        )
+                      )}
+                    </div>
+
+                    {/* Focus section */}
+                    <div className="border-t pt-1">
+                      <div className="px-4 py-1 text-xs text-gray-400 border-b">
+                        Focus:{" "}
+                        {section.focusedParticipantId
+                          ? editData?.recordings.find(
+                              (r) => r.id === section.focusedParticipantId
+                            )
+                            ? `Partecipante ${
+                                editData.recordings.findIndex(
+                                  (r) => r.id === section.focusedParticipantId
+                                ) + 1
+                              }`
+                            : "Sconosciuto"
+                          : "Nessuno (50/50)"}
+                      </div>
+
+                      {/* No focus option */}
+                      <button
+                        className={`w-full px-4 py-1 text-left hover:bg-gray-100 text-sm ${
+                          !section.focusedParticipantId
+                            ? "bg-blue-50 text-blue-600 font-medium"
+                            : "text-gray-700"
+                        }`}
+                        onClick={() => setSectionFocus(section.id, undefined)}
+                      >
+                        👥 Nessun Focus (50/50)
+                      </button>
+
+                      {/* Participant focus options */}
+                      {editData?.recordings.map((recording, index) => (
                         <button
-                          key={speed}
+                          key={recording.id}
                           className={`w-full px-4 py-1 text-left hover:bg-gray-100 text-sm ${
-                            section.playbackSpeed === speed ? 'bg-blue-50 text-blue-600 font-medium' : 'text-gray-700'
+                            section.focusedParticipantId === recording.id
+                              ? "bg-blue-50 text-blue-600 font-medium"
+                              : "text-gray-700"
                           }`}
-                          onClick={() => setPlaybackSpeed(section.id, speed)}
+                          onClick={() =>
+                            setSectionFocus(section.id, recording.id)
+                          }
                         >
-                          {speed === 1.0 ? '🎬' : speed < 1.0 ? '🐌' : '⚡'} {speed}x {speed === 1.0 ? '(normale)' : ''}
+                          🎯 Partecipante {index + 1}
                         </button>
                       ))}
                     </div>
-                    
+
                     <button
-                      className="w-full px-4 py-2 text-left hover:bg-gray-100 text-red-600"
+                      className="w-full px-4 py-2 text-left hover:bg-gray-100 text-red-600 border-t"
                       onClick={() => deleteSection(section.id)}
                     >
                       🗑️ Elimina Sezione
                     </button>
-                    
+
                     {/* Debug button - remove when fixed */}
                     <div className="border-t mb-1">
                       <button
@@ -1761,6 +1844,29 @@ export default function EditPage() {
               </div>
             );
           })()}
+        </div>
+      )}
+
+      {/* Split Point Context Menu */}
+      {splitContextMenu && (
+        <div
+          className="fixed bg-white shadow-lg rounded-lg border py-2 z-50"
+          style={{
+            left: splitContextMenu.x,
+            top: splitContextMenu.y,
+          }}
+          onMouseLeave={() => setSplitContextMenu(null)}
+        >
+          <div className="px-4 py-1 text-xs text-gray-500 border-b">
+            Split Point {splitContextMenu.splitIndex + 1} -{" "}
+            {splitPoints[splitContextMenu.splitIndex]?.toFixed(1)}s
+          </div>
+          <button
+            className="w-full px-4 py-2 text-left hover:bg-gray-100 text-red-600"
+            onClick={() => deleteSplitPoint(splitContextMenu.splitIndex)}
+          >
+            🗑️ Elimina Split Point
+          </button>
         </div>
       )}
 
@@ -1786,54 +1892,57 @@ export default function EditPage() {
               <div className="space-y-4">
                 <div className="flex items-center space-x-3">
                   <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-purple-600"></div>
-                  <span className="text-sm text-gray-600">{exportStatus.message}</span>
+                  <span className="text-sm text-gray-600">
+                    {exportStatus.message}
+                  </span>
                 </div>
-                
+
                 <div className="w-full bg-gray-200 rounded-full h-2">
-                  <div 
+                  <div
                     className="bg-purple-600 h-2 rounded-full transition-all duration-300"
                     style={{ width: `${exportStatus.percentage}%` }}
                   ></div>
                 </div>
-                
+
                 <div className="text-center">
                   <p className="text-sm text-gray-500 mb-3">
                     {exportStatus.percentage}% completato
                   </p>
-                  <Button
-                    onClick={cancelExport}
-                    variant="outline"
-                    size="sm"
-                  >
+                  <Button onClick={cancelExport} variant="outline" size="sm">
                     Annulla
                   </Button>
                 </div>
 
-                {exportStatus.stage === 'completed' && exportStatus.downloadUrl && (
-                  <div className="text-center pt-4 border-t">
-                    <p className="text-green-600 mb-2">✅ Export completato!</p>
-                    <Button
-                      onClick={() => {
-                        window.open(exportStatus.downloadUrl!, '_blank')
-                        setShowExportModal(false)
-                        resetExport()
-                      }}
-                      className="bg-green-600 hover:bg-green-700"
-                    >
-                      <Download className="h-4 w-4 mr-2" />
-                      Scarica Video
-                    </Button>
-                  </div>
-                )}
+                {exportStatus.stage === "completed" &&
+                  exportStatus.downloadUrl && (
+                    <div className="text-center pt-4 border-t">
+                      <p className="text-green-600 mb-2">
+                        ✅ Export completato!
+                      </p>
+                      <Button
+                        onClick={() => {
+                          window.open(exportStatus.downloadUrl!, "_blank");
+                          setShowExportModal(false);
+                          resetExport();
+                        }}
+                        className="bg-green-600 hover:bg-green-700"
+                      >
+                        <Download className="h-4 w-4 mr-2" />
+                        Scarica Video
+                      </Button>
+                    </div>
+                  )}
 
-                {exportStatus.stage === 'failed' && (
+                {exportStatus.stage === "failed" && (
                   <div className="text-center pt-4 border-t">
                     <p className="text-red-600 mb-2">❌ Export fallito</p>
-                    <p className="text-sm text-gray-500 mb-3">{exportStatus.error}</p>
+                    <p className="text-sm text-gray-500 mb-3">
+                      {exportStatus.error}
+                    </p>
                     <Button
                       onClick={() => {
-                        setShowExportModal(false)
-                        resetExport()
+                        setShowExportModal(false);
+                        resetExport();
                       }}
                       variant="outline"
                     >
@@ -1873,7 +1982,10 @@ export default function EditPage() {
                     defaultChecked
                     className="rounded border-gray-300 text-purple-600 focus:ring-purple-500"
                   />
-                  <label htmlFor="includeSubtitles" className="text-sm text-gray-700">
+                  <label
+                    htmlFor="includeSubtitles"
+                    className="text-sm text-gray-700"
+                  >
                     Includi sottotitoli
                   </label>
                 </div>
@@ -1882,17 +1994,40 @@ export default function EditPage() {
                   <div className="text-sm text-gray-600">
                     <div className="flex justify-between">
                       <span>Durata originale:</span>
-                      <span>{Math.floor(duration / 60)}:{(duration % 60).toFixed(0).padStart(2, '0')}</span>
+                      <span>
+                        {Math.floor(duration / 60)}:
+                        {(duration % 60).toFixed(0).padStart(2, "0")}
+                      </span>
                     </div>
                     <div className="flex justify-between">
                       <span>Durata finale:</span>
                       <span>
-                        {Math.floor((videoSections.filter(s => !s.isDeleted).reduce((acc, s) => acc + (s.endTime - s.startTime), 0)) / 60)}:{((videoSections.filter(s => !s.isDeleted).reduce((acc, s) => acc + (s.endTime - s.startTime), 0)) % 60).toFixed(0).padStart(2, '0')}
+                        {Math.floor(
+                          videoSections
+                            .filter((s) => !s.isDeleted)
+                            .reduce(
+                              (acc, s) => acc + (s.endTime - s.startTime),
+                              0
+                            ) / 60
+                        )}
+                        :
+                        {(
+                          videoSections
+                            .filter((s) => !s.isDeleted)
+                            .reduce(
+                              (acc, s) => acc + (s.endTime - s.startTime),
+                              0
+                            ) % 60
+                        )
+                          .toFixed(0)
+                          .padStart(2, "0")}
                       </span>
                     </div>
                     <div className="flex justify-between">
                       <span>Sezioni eliminate:</span>
-                      <span>{videoSections.filter(s => s.isDeleted).length}</span>
+                      <span>
+                        {videoSections.filter((s) => s.isDeleted).length}
+                      </span>
                     </div>
                   </div>
                 </div>
@@ -1908,12 +2043,12 @@ export default function EditPage() {
                   <Button
                     onClick={() => {
                       const settings: ExportSettings = {
-                        format: 'mp4',
-                        quality: '720p',
+                        format: "mp4",
+                        quality: "720p",
                         framerate: 30,
-                        includeSubtitles: true
-                      }
-                      startExport(roomId, settings)
+                        includeSubtitles: true,
+                      };
+                      startExport(roomId, settings);
                     }}
                     className="flex-1 bg-purple-600 hover:bg-purple-700"
                   >

@@ -268,42 +268,13 @@ export default function ProcessingPage() {
       );
       setCurrentStep(2);
 
-      // Step 3: AI Editing Analysis
+      // Step 3: AI Editing Analysis (TEMPORARILY DISABLED)
+      console.log("AI editing step skipped - temporarily disabled");
       updateStep(
         "ai-edit",
-        "processing",
-        "AI sta analizzando la conversazione per creare focus segments automatici..."
+        "completed",
+        "AI editing disabilitato temporaneamente - focus segments gestiti manualmente"
       );
-
-      const aiEditResponse = await fetch("/api/recordings/ai-edit", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          roomId: data.roomId,
-          transcriptions: transcribeData.transcriptions,
-          recordings: transcribeData.recordings,
-        }),
-      });
-
-      if (!aiEditResponse.ok) {
-        console.error("AI editing failed, continuing without it");
-        updateStep(
-          "ai-edit",
-          "error",
-          "AI editing fallito - continuo senza focus automatici"
-        );
-      } else {
-        const aiEditData = await aiEditResponse.json();
-        updateStep(
-          "ai-edit",
-          "completed",
-          `${aiEditData.result.focusSegments.length} focus segments e ${
-            aiEditData.result.speedRecommendations?.length || 0
-          } raccomandazioni velocità generati automaticamente`
-        );
-        // Store AI editing results for the save step
-        transcribeData.aiEditingResult = aiEditData.result;
-      }
 
       setCurrentStep(3);
 
@@ -317,7 +288,7 @@ export default function ProcessingPage() {
           roomId: data.roomId,
           recordings: transcribeData.recordings, // Now includes start_ts from Daily.co
           transcriptions: transcribeData.transcriptions,
-          aiEditingResult: transcribeData.aiEditingResult, // Include AI-generated focus segments
+          // aiEditingResult: transcribeData.aiEditingResult, // DISABLED - AI-generated focus segments
         }),
       });
 
