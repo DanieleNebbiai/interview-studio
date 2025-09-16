@@ -260,11 +260,12 @@ export async function buildFFmpegCommandMemorySafe(data: {
   const CHUNK_MAX_DURATION = 10 // Max 10 seconds per chunk to limit memory
   const GC_DELAY = 2000 // 2s pause between chunks for garbage collection
 
-  // Create recording ID to video index mapping
+  // Create participant ID to video index mapping (for focus system)
   const recordingVideoMap: { [key: string]: number } = {}
   recordings.forEach((recording, index) => {
-    recordingVideoMap[recording.id] = index
+    recordingVideoMap[recording.participant_id] = index
   })
+  console.log('👥 Participant to video mapping:', recordingVideoMap)
 
   // Calculate video synchronization offsets from recording_started_at
   const videoSyncOffsets: number[] = []
@@ -428,12 +429,12 @@ export function buildFFmpegCommand(data: {
     }, 0)
     console.log(`📐 Expected final video duration: ${expectedFinalDuration.toFixed(1)}s (original: ${validSections.reduce((t, s) => t + (s.endTime - s.startTime), 0).toFixed(1)}s)`)
     
-    // Create recording ID to video index mapping (focus segments use recording_id)
+    // Create participant ID to video index mapping (for focus system)
     const recordingVideoMap: { [key: string]: number } = {}
     recordings.forEach((recording, index) => {
-      recordingVideoMap[recording.id] = index
+      recordingVideoMap[recording.participant_id] = index
     })
-    console.log('👥 Recording to video mapping:', recordingVideoMap)
+    console.log('👥 Participant to video mapping:', recordingVideoMap)
     
     // OVERLAY-BASED FOCUS: Base 50/50 with dynamic full-screen overlays - MULTI-SECTION SUPPORT
     console.log(`📹 Processing ${validSections.length} sections with OVERLAY-BASED FOCUS`)
@@ -762,38 +763,37 @@ async function processChunkMemorySafe(params: {
         `[a0_c${chunkIndex}][a1_c${chunkIndex}]amix=inputs=2[audio_c${chunkIndex}]`
       )
 
-      const currentVideoStream = `[base_video_c${chunkIndex}]`
-
       // NEW FOCUS SYSTEM: Focus is now a property of the chunk (derived from section)
+      let currentVideoStream = `[base_video_c${chunkIndex}]`
+
       if (chunk.focusedParticipantId) {
         console.log(`🎯 Chunk ${chunkIndex}: Focus on participant ${chunk.focusedParticipantId} for entire chunk`)
+
+        // Find the video index for this participant
+        const videoIndex = recordingVideoMap[chunk.focusedParticipantId]
+        if (videoIndex !== undefined) {
+          const overlayName = `overlay_c${chunkIndex}`
+          const fullStreamName = `full${videoIndex}_c${chunkIndex}`
+
+          console.log(`🎥 Applying focus overlay: participant ${chunk.focusedParticipantId} -> video index ${videoIndex}`)
+
+          // Create full-screen version of the focused participant
+          filterComplex.push(
+            `[${videoIndex}:v]trim=start=${chunk.startTime.toFixed(2)}:duration=${chunkDuration.toFixed(2)},setpts=PTS-STARTPTS,scale=1280:720,setsar=1/1[${fullStreamName}]`
+          )
+
+          // Overlay the full-screen focused participant for the entire duration
+          filterComplex.push(
+            `${currentVideoStream}[${fullStreamName}]overlay=0:0[${overlayName}]`
+          )
+
+          currentVideoStream = `[${overlayName}]`
+        } else {
+          console.log(`⚠️ Participant ${chunk.focusedParticipantId} not found in recordingVideoMap:`, recordingVideoMap)
+        }
       } else {
         console.log(`🎯 Chunk ${chunkIndex}: No focus overlay (50/50 split)`)
       }
-
-      // FOCUS OVERLAYS DISABLED - all focus processing commented out
-      // if (chunkFocusSegments.length > 0) {
-      //   const fs = chunkFocusSegments[0] // Use only the first one
-      //   if (fs.focusedParticipantId && recordingVideoMap[fs.focusedParticipantId] !== undefined) {
-      //     const videoIndex = recordingVideoMap[fs.focusedParticipantId]
-      //     const overlayName = `overlay_c${chunkIndex}`
-      //     const fullStreamName = `full${videoIndex}_c${chunkIndex}`
-      //
-      //     filterComplex.push(
-      //       `[${videoIndex}:v]trim=start=${chunk.startTime.toFixed(2)}:duration=${chunkDuration.toFixed(2)},scale=1280:720,setsar=1/1[${fullStreamName}]`
-      //     )
-      //
-      //     const relativeStart = Math.max(0, fs.startTime - chunk.startTime)
-      //     const relativeEnd = Math.min(chunk.endTime - chunk.startTime, fs.endTime - chunk.startTime)
-      //
-      //     const enableExpr = `'between(t,${relativeStart.toFixed(2)},${relativeEnd.toFixed(2)})'`
-      //     filterComplex.push(
-      //       `${currentVideoStream}[${fullStreamName}]overlay=enable=${enableExpr}[${overlayName}]`
-      //     )
-      //
-      //     currentVideoStream = `[${overlayName}]`
-      //   }
-      // }
 
       filterComplex.push(`${currentVideoStream}null[finalvideo]`)
       // Audio is already processed above as [audio_c${chunkIndex}]
