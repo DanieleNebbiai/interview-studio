@@ -1,20 +1,20 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback } from "react";
-import { useParams, useRouter } from "next/navigation";
-import { Button } from "@/components/ui/button";
-import {
-  Play,
-  Pause,
-  Volume2,
-  VolumeX,
-  ArrowLeft,
-  Download,
-  CheckCircle,
-  Link,
-} from "lucide-react";
-import { useVideoExport, ExportSettings } from "@/hooks/useVideoExport";
+import { useParams } from "next/navigation";
+import { useVideoExport } from "@/hooks/useVideoExport";
 import { useEditSave } from "@/hooks/useEditSave";
+import { LoadingState } from "@/components/edit/LoadingState";
+import { ErrorState } from "@/components/edit/ErrorState";
+import { EditHeader } from "@/components/edit/EditHeader";
+import { VideoPlayer } from "@/components/edit/VideoPlayer";
+import { PlaybackControls } from "@/components/edit/PlaybackControls";
+import { SplitControls } from "@/components/edit/SplitControls";
+import { Timeline } from "@/components/edit/Timeline";
+import { ExportModal } from "@/components/edit/ExportModal";
+import { ContextMenu } from "@/components/edit/ContextMenu";
+import { SplitContextMenu } from "@/components/edit/SplitContextMenu";
+import { TranscriptionSidebar } from "@/components/edit/TranscriptionSidebar";
 
 interface Recording {
   id: string;
@@ -58,7 +58,6 @@ interface VideoSection {
 
 export default function EditPage() {
   const params = useParams();
-  const router = useRouter();
   const roomId = params.roomId as string;
 
   const [editData, setEditData] = useState<EditData | null>(null);
@@ -487,12 +486,97 @@ export default function EditPage() {
     setMutedVideos(newMutedVideos);
   };
 
-  const getVideoGridClass = (count: number) => {
-    if (count === 1) return "grid-cols-1";
-    if (count === 2) return "grid-cols-2";
-    if (count <= 4) return "grid-cols-2";
-    return "grid-cols-3";
-  };
+  // Helper functions for extracted components
+  const handleVideoTimeUpdate = (recordingId: string, videoTime: number) => {
+    const offset = syncOffsets[recordingId] || 0
+
+    if (!isFinite(videoTime) || !isFinite(offset)) {
+      console.error(
+        `Invalid values in onTimeUpdate for ${recordingId}: videoTime=${videoTime}, offset=${offset}`
+      )
+      return
+    }
+
+    const timelineTime = videoTime - offset
+
+    if (isFinite(timelineTime) && timelineTime >= 0) {
+      setCurrentTime(timelineTime)
+    } else {
+      console.error(
+        `Invalid timeline time for ${recordingId}: ${timelineTime} (videoTime: ${videoTime}, offset: ${offset})`
+      )
+      return
+    }
+
+    const currentSection = videoSections.find(
+      (section) =>
+        timelineTime >= section.startTime &&
+        timelineTime < section.endTime
+    )
+
+    if (currentSection && !currentSection.isDeleted) {
+      Object.values(videoRefs.current).forEach((video) => {
+        if (
+          video &&
+          video.playbackRate !== currentSection.playbackSpeed
+        ) {
+          video.playbackRate = currentSection.playbackSpeed
+          console.log(
+            `Applied playback speed ${
+              currentSection.playbackSpeed
+            }x to section ${currentSection.startTime.toFixed(
+              1
+            )}s-${currentSection.endTime.toFixed(1)}s`
+          )
+        }
+      })
+    }
+
+    if (currentSection && currentSection.isDeleted && isPlaying) {
+      const nextSection = videoSections
+        .filter(
+          (section) =>
+            !section.isDeleted && section.startTime > timelineTime
+        )
+        .sort((a, b) => a.startTime - b.startTime)[0]
+
+      if (nextSection) {
+        const jumpTime = nextSection.startTime
+        if (isFinite(jumpTime) && jumpTime >= 0) {
+          console.log(
+            `Skipping deleted section ${currentSection.startTime.toFixed(
+              1
+            )}s-${currentSection.endTime.toFixed(
+              1
+            )}s, jumping to ${jumpTime.toFixed(1)}s`
+          )
+          syncAllVideosToTime(jumpTime)
+        } else {
+          console.error(`Invalid jump time: ${jumpTime}`)
+        }
+      } else {
+        console.log(
+          "Reached end of non-deleted sections, pausing video"
+        )
+        setIsPlaying(false)
+        Object.values(videoRefs.current).forEach((v) => v?.pause())
+      }
+    }
+  }
+
+  const handleSectionContextMenu = (event: React.MouseEvent, sectionId: string) => {
+    const windowHeight = window.innerHeight
+    const clickY = event.clientY
+    const estimatedMenuHeight = 400
+    const shouldOpenUpward = clickY + estimatedMenuHeight > windowHeight
+
+    setContextMenu({
+      x: event.clientX,
+      y: event.clientY,
+      sectionId,
+      openUpward: shouldOpenUpward,
+    })
+  }
 
   // Sync all videos to a specific time, applying cut offsets (videos start from their offset point)
   const syncAllVideosToTime = useCallback(
@@ -1072,1061 +1156,128 @@ export default function EditPage() {
     });
   };
 
-  const renderVideoCard = (recording: Recording, index: number) => {
-    // Check if current section has focus on this participant
-    const currentSection = videoSections.find(
-      (section) =>
-        currentTime >= section.startTime && currentTime < section.endTime
-    );
-    const isInFocus = currentSection?.focusedParticipantId === recording.id;
-    const hasVideoError = videoErrors.has(recording.id);
-
-    return (
-      <div
-        key={recording.id}
-        className={`relative bg-black rounded-lg overflow-hidden w-full h-full transition-all duration-200 ${
-          isInFocus ? "ring-2 ring-purple-400" : ""
-        }`}
-      >
-        <video
-          ref={(el) => {
-            if (el) {
-              videoRefs.current[recording.id] = el;
-            }
-          }}
-          src={recording.recording_url}
-          controls={false}
-          muted={mutedVideos.has(recording.id)}
-          className="w-full h-full object-cover"
-          crossOrigin="anonymous"
-          onLoadedMetadata={(e) => {
-            const video = e.currentTarget;
-            console.log(
-              `Video loaded: ${recording.id}, duration: ${video.duration}s`
-            );
-
-            // Track that this video has loaded
-            setVideosLoaded((prev) => new Set(prev).add(recording.id));
-
-            // Apply initial cut offset - start video from its offset point
-            const offset = syncOffsets[recording.id] || 0;
-            const initialVideoTime = currentTime + offset;
-
-            // Validate before setting currentTime
-            if (isFinite(initialVideoTime) && initialVideoTime >= 0) {
-              // Clamp to video duration if necessary
-              const clampedTime = Math.min(
-                initialVideoTime,
-                video.duration || initialVideoTime
-              );
-              video.currentTime = clampedTime;
-              console.log(
-                `Video ${recording.id}: applying cut offset ${offset}s, starting at ${clampedTime}s`
-              );
-            } else {
-              console.error(
-                `Invalid initial video time for ${recording.id}: ${initialVideoTime} (currentTime: ${currentTime}, offset: ${offset})`
-              );
-              video.currentTime = 0; // Fallback to start
-            }
-          }}
-          onTimeUpdate={(e) => {
-            const video = e.currentTarget;
-            // Update current time from the focused video, or first video if no focus
-            const masterVideoId = focusedVideo || editData?.recordings[0]?.id;
-            if (recording.id === masterVideoId) {
-              // Convert video time back to timeline time (remove the cut offset)
-              const videoTime = video.currentTime;
-              const offset = syncOffsets[recording.id] || 0;
-
-              // Validate values before calculation
-              if (!isFinite(videoTime) || !isFinite(offset)) {
-                console.error(
-                  `Invalid values in onTimeUpdate for ${recording.id}: videoTime=${videoTime}, offset=${offset}`
-                );
-                return;
-              }
-
-              const timelineTime = videoTime - offset;
-
-              // Validate timeline time before setting
-              if (isFinite(timelineTime) && timelineTime >= 0) {
-                setCurrentTime(timelineTime);
-              } else {
-                console.error(
-                  `Invalid timeline time for ${recording.id}: ${timelineTime} (videoTime: ${videoTime}, offset: ${offset})`
-                );
-                return;
-              }
-
-              // Check current section and apply playback speed
-              const currentSection = videoSections.find(
-                (section) =>
-                  timelineTime >= section.startTime &&
-                  timelineTime < section.endTime
-              );
-
-              // Apply playback speed for current section
-              if (currentSection && !currentSection.isDeleted) {
-                Object.values(videoRefs.current).forEach((video) => {
-                  if (
-                    video &&
-                    video.playbackRate !== currentSection.playbackSpeed
-                  ) {
-                    video.playbackRate = currentSection.playbackSpeed;
-                    console.log(
-                      `Applied playback speed ${
-                        currentSection.playbackSpeed
-                      }x to section ${currentSection.startTime.toFixed(
-                        1
-                      )}s-${currentSection.endTime.toFixed(1)}s`
-                    );
-                  }
-                });
-              }
-
-              if (currentSection && currentSection.isDeleted && isPlaying) {
-                // Find next non-deleted section
-                const nextSection = videoSections
-                  .filter(
-                    (section) =>
-                      !section.isDeleted && section.startTime > timelineTime
-                  )
-                  .sort((a, b) => a.startTime - b.startTime)[0];
-
-                if (nextSection) {
-                  const jumpTime = nextSection.startTime;
-                  if (isFinite(jumpTime) && jumpTime >= 0) {
-                    console.log(
-                      `Skipping deleted section ${currentSection.startTime.toFixed(
-                        1
-                      )}s-${currentSection.endTime.toFixed(
-                        1
-                      )}s, jumping to ${jumpTime.toFixed(1)}s`
-                    );
-                    syncAllVideosToTime(jumpTime);
-                  } else {
-                    console.error(`Invalid jump time: ${jumpTime}`);
-                  }
-                } else {
-                  // No more sections, pause video
-                  console.log(
-                    "Reached end of non-deleted sections, pausing video"
-                  );
-                  setIsPlaying(false);
-                  Object.values(videoRefs.current).forEach((v) => v?.pause());
-                }
-              }
-            }
-          }}
-          onError={(e) => {
-            console.error(
-              `Video error for ${recording.id}:`,
-              e.currentTarget.error
-            );
-            console.log(`Video URL: ${recording.recording_url}`);
-            handleVideoError(recording.id);
-          }}
-          onLoadStart={() => {
-            console.log(`Loading video: ${recording.id}`);
-          }}
-        />
-
-        {/* Video Error Fallback */}
-        {hasVideoError && (
-          <div className="absolute inset-0 bg-gray-800 flex flex-col items-center justify-center text-white">
-            <div className="text-center p-4">
-              <div className="text-red-400 mb-2">⚠️ Errore Video</div>
-              <div className="text-sm text-gray-300">
-                Video non disponibile o scaduto
-              </div>
-              <Button
-                onClick={() => retryVideo(recording.id)}
-                size="sm"
-                variant="outline"
-                className="mt-2 text-white border-white hover:bg-white hover:text-black"
-              >
-                Riprova
-              </Button>
-            </div>
-          </div>
-        )}
-
-        {/* Video Controls Overlay */}
-        <div className="absolute bottom-2 right-2 flex space-x-2">
-          <Button
-            size="sm"
-            variant={mutedVideos.has(recording.id) ? "secondary" : "default"}
-            onClick={() => toggleMute(recording.id)}
-            className="bg-black/50 hover:bg-black/70 text-white"
-          >
-            {mutedVideos.has(recording.id) ? (
-              <VolumeX className="h-4 w-4" />
-            ) : (
-              <Volume2 className="h-4 w-4" />
-            )}
-          </Button>
-        </div>
-
-        {/* Participant Label */}
-        <div className="absolute top-2 left-2 bg-black/50 text-white px-2 py-1 rounded text-sm">
-          Partecipante {index + 1}
-        </div>
-      </div>
-    );
-  };
 
   if (loading) {
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-gray-50 via-white to-blue-50 flex items-center justify-center">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
-      </div>
-    );
+    return <LoadingState />;
   }
 
   if (error || !editData) {
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-gray-50 via-white to-blue-50 flex items-center justify-center">
-        <div className="text-center">
-          <h1 className="text-2xl font-bold text-gray-900 mb-4">Errore</h1>
-          <p className="text-gray-600 mb-6">{error || "Dati non trovati"}</p>
-          <Button
-            onClick={() => router.push("/recordings")}
-            className="bg-blue-600 hover:bg-blue-700"
-          >
-            <ArrowLeft className="h-4 w-4 mr-2" />
-            Torna alle Registrazioni
-          </Button>
-        </div>
-      </div>
-    );
+    return <ErrorState error={error} />;
   }
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-50 via-white to-blue-50">
       <div className="container mx-auto px-4 py-6">
-        {/* Header */}
-        <div className="flex items-center justify-between mb-6">
-          <div className="flex items-center space-x-4">
-            <Button
-              onClick={() => router.push("/recordings")}
-              variant="outline"
-              className="bg-white"
-            >
-              <ArrowLeft className="h-4 w-4 mr-2" />
-              Indietro
-            </Button>
-            <div>
-              <h1 className="text-2xl font-bold text-gray-900">Editor Video</h1>
-              <p className="text-gray-600">Room: {editData.roomName}</p>
-            </div>
-          </div>
-          <div className="flex items-center space-x-2">
-            {Object.keys(syncOffsets).length > 0 && (
-              <div className="text-sm text-green-600 bg-green-50 px-3 py-1 rounded-full">
-                ✂️ Video tagliati automaticamente (
-                {Object.keys(syncOffsets).length} offset applicati)
-                {editData?.recordings?.some((r) => r.recording_started_at)
-                  ? ""
-                  : " - usando created_at"}
-              </div>
-            )}
-
-            {/* Export Button */}
-            <Button
-              onClick={() => setShowExportModal(true)}
-              className="bg-purple-600 hover:bg-purple-700 text-white"
-              disabled={!editData || isExporting}
-            >
-              <Download className="h-4 w-4 mr-2" />
-              {isExporting ? "Esportando..." : "Esporta Video"}
-            </Button>
-
-            <Button
-              onClick={fetchEditData}
-              variant="outline"
-              size="sm"
-              className="bg-white"
-              disabled={loading}
-            >
-              {loading ? "Aggiornamento..." : "Aggiorna Video"}
-            </Button>
-          </div>
-        </div>
+        <EditHeader
+          roomName={editData.roomName}
+          syncOffsets={syncOffsets}
+          recordings={editData.recordings}
+          isExporting={isExporting}
+          onExport={() => setShowExportModal(true)}
+          onRefresh={fetchEditData}
+          loading={loading}
+        />
 
         <div className="pr-96">
           {" "}
           {/* Add right margin for fixed sidebar */}
-          {/* Video Area - Fixed Size Layout */}
-          <div className="bg-white rounded-lg shadow-lg p-4 mb-6 relative">
-            <div className="w-full h-[400px] mx-auto relative overflow-hidden">
-              <div
-                className={`w-full h-full transition-all duration-500 ease-in-out ${
-                  focusedVideo
-                    ? "flex items-center justify-center"
-                    : `grid gap-2 ${getVideoGridClass(
-                        editData.recordings.length
-                      )}`
-                }`}
-              >
-                {/* Always render all videos, but show/hide them with CSS */}
-                {editData.recordings.map((recording, index) => {
-                  const isFocused = focusedVideo === recording.id;
-                  const shouldShow = !focusedVideo || isFocused;
-
-                  return (
-                    <div
-                      key={recording.id}
-                      className={`transform transition-all duration-500 ease-in-out ${
-                        shouldShow
-                          ? "opacity-100 scale-100 relative"
-                          : "opacity-0 scale-95 absolute top-0 left-0 pointer-events-none"
-                      } ${isFocused ? "w-full h-full" : ""}`}
-                    >
-                      {renderVideoCard(recording, index)}
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-
-            {/* Captions Overlay */}
-            {currentCaptions && currentCaptions.length > 0 && (
-              <div className="absolute top-4 left-4 right-4 bottom-4 flex items-end justify-center pointer-events-none">
-                <div className="bg-black bg-opacity-75 rounded-lg p-4 max-w-[600px]">
-                  <div className="flex flex-wrap gap-1 text-white text-lg font-medium leading-relaxed">
-                    {currentCaptions.map((caption, index) => (
-                      <span
-                        key={`${caption.start}-${index}`}
-                        className={`transition-all duration-300 px-1 rounded ${
-                          caption.isActive
-                            ? "bg-yellow-400 text-black font-bold scale-110"
-                            : caption.participantIndex === 1
-                            ? "text-blue-300"
-                            : "text-green-300"
-                        }`}
-                        style={{
-                          transitionDelay: caption.isActive ? "0ms" : "100ms",
-                        }}
-                      >
-                        {caption.word}
-                      </span>
-                    ))}
-                  </div>
-
-                  {/* Participant indicator */}
-                  <div className="text-xs text-gray-300 mt-2">
-                    {currentCaptions.some((c) => c.isActive) && (
-                      <>
-                        Partecipante{" "}
-                        {
-                          currentCaptions.find((c) => c.isActive)
-                            ?.participantIndex
-                        }
-                      </>
-                    )}
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
+          <VideoPlayer
+            recordings={editData.recordings}
+            currentTime={currentTime}
+            mutedVideos={mutedVideos}
+            videoRefs={videoRefs}
+            focusedVideo={focusedVideo}
+            videoErrors={videoErrors}
+            syncOffsets={syncOffsets}
+            videoSections={videoSections}
+            videosLoaded={videosLoaded}
+            isPlaying={isPlaying}
+            onToggleMute={toggleMute}
+            onVideoError={handleVideoError}
+            onRetryVideo={retryVideo}
+            onVideosLoaded={(recordingId) => setVideosLoaded(prev => new Set(prev).add(recordingId))}
+            onTimeUpdate={handleVideoTimeUpdate}
+            currentCaptions={currentCaptions}
+          />
           {/* Timeline Section */}
           <div className="bg-white rounded-lg shadow-lg p-4 space-y-6">
-            {/* Playback Controls */}
             <div className="flex items-center justify-between">
-              <div className="flex items-center space-x-4">
-                <Button
-                  onClick={togglePlay}
-                  className="bg-blue-600 hover:bg-blue-700"
-                >
-                  {isPlaying ? (
-                    <Pause className="h-4 w-4" />
-                  ) : (
-                    <Play className="h-4 w-4" />
-                  )}
-                </Button>
+              <PlaybackControls
+                isPlaying={isPlaying}
+                currentTime={currentTime}
+                duration={duration}
+                onTogglePlay={togglePlay}
+              />
 
-                <div className="text-sm text-gray-600">
-                  {Math.floor(currentTime / 60)}:
-                  {(currentTime % 60).toFixed(0).padStart(2, "0")} /{" "}
-                  {Math.floor(duration / 60)}:
-                  {(duration % 60).toFixed(0).padStart(2, "0")}
-                </div>
-              </div>
-
-              {/* Split Controls */}
-              <div className="flex items-center space-x-2">
-                <Button
-                  onClick={toggleSplitMode}
-                  size="sm"
-                  variant={isSplitMode ? "default" : "outline"}
-                  className={
-                    isSplitMode ? "bg-orange-600 hover:bg-orange-700" : ""
-                  }
-                >
-                  {isSplitMode ? "🔪 Split Mode ON" : "🔪 Split Mode"}
-                </Button>
-                <Button
-                  onClick={resetSplits}
-                  size="sm"
-                  variant="outline"
-                  disabled={splitPoints.length === 0}
-                >
-                  Reset Splits
-                </Button>
-                <div className="text-sm text-gray-500 flex items-center gap-2">
-                  <span>
-                    {splitPoints.length} splits,{" "}
-                    {videoSections.filter((s) => !s.isDeleted).length}/
-                    {videoSections.length} sezioni
-                  </span>
-                  {isSaving && (
-                    <span className="text-xs text-blue-500">
-                      💾 Salvando...
-                    </span>
-                  )}
-                  {lastSaved && !isSaving && (
-                    <span className="text-xs text-green-500">
-                      ✅ Salvato {lastSaved.toLocaleTimeString()}
-                    </span>
-                  )}
-                  {saveError && (
-                    <span className="text-xs text-red-500" title={saveError}>
-                      ❌ Errore salvataggio
-                    </span>
-                  )}
-                </div>
-              </div>
+              <SplitControls
+                isSplitMode={isSplitMode}
+                splitPoints={splitPoints}
+                videoSections={videoSections}
+                isSaving={isSaving}
+                lastSaved={lastSaved}
+                saveError={saveError}
+                onToggleSplitMode={toggleSplitMode}
+                onResetSplits={resetSplits}
+              />
             </div>
 
-            {/* Main Timeline Bar */}
-            <div className="space-y-2">
-              <div className="flex items-center justify-between">
-                <span className="text-xs text-gray-400">
-                  {isSplitMode ? "Timeline - Click per fare split" : "Timeline"}
-                </span>
-                <div className="text-xs text-gray-500 flex items-center gap-4">
-                  <span>
-                    Durata finale:{" "}
-                    {(
-                      videoSections
-                        .filter((s) => !s.isDeleted)
-                        .reduce(
-                          (acc, s) => acc + (s.endTime - s.startTime),
-                          0
-                        ) / 60
-                    ).toFixed(1)}{" "}
-                    min
-                  </span>
-                  <div className="flex items-center gap-2">
-                    <div className="flex items-center gap-1">
-                      <div className="w-3 h-3 bg-green-200 rounded-sm"></div>
-                      <span>1x</span>
-                    </div>
-                    <div className="flex items-center gap-1">
-                      <div className="w-3 h-3 bg-orange-200 rounded-sm"></div>
-                      <span>&lt;1x</span>
-                    </div>
-                    <div className="flex items-center gap-1">
-                      <div className="w-3 h-3 bg-blue-200 rounded-sm"></div>
-                      <span>&gt;1x</span>
-                    </div>
-                    <div className="flex items-center gap-1">
-                      <div className="w-3 h-3 bg-purple-300 rounded-sm"></div>
-                      <span>🎯 Focus</span>
-                    </div>
-                  </div>
-                </div>
-              </div>
-              <div
-                className={`w-full h-8 rounded-full cursor-pointer relative ${
-                  isSplitMode ? "bg-orange-100" : "bg-gray-200"
-                }`}
-                onClick={handleTimelineClick}
-                onMouseMove={handleSplitMouseMove}
-                onMouseUp={handleSplitMouseUp}
-                onMouseLeave={handleSplitMouseUp}
-              >
-                {/* Render video sections */}
-                {videoSections.map((section) => (
-                  <div
-                    key={section.id}
-                    className={`absolute top-0 h-full ${
-                      section.isDeleted
-                        ? "bg-red-200 opacity-50"
-                        : section.focusedParticipantId
-                        ? "bg-purple-300" // Sections with focus
-                        : section.playbackSpeed !== 1.0
-                        ? section.playbackSpeed < 1.0
-                          ? "bg-orange-200" // Slow sections
-                          : "bg-blue-200" // Fast sections
-                        : "bg-green-200" // Normal speed sections
-                    } border-l border-r border-gray-400`}
-                    style={{
-                      left: `${(section.startTime / duration) * 100}%`,
-                      width: `${
-                        ((section.endTime - section.startTime) / duration) * 100
-                      }%`,
-                    }}
-                    title={`Section ${section.startTime.toFixed(
-                      1
-                    )}s - ${section.endTime.toFixed(1)}s${
-                      section.isDeleted
-                        ? " (DELETED)"
-                        : ` - Velocità: ${section.playbackSpeed}x${
-                            section.focusedParticipantId
-                              ? ` - Focus: Partecipante ${
-                                  editData?.recordings.findIndex(
-                                    (r) => r.id === section.focusedParticipantId
-                                  ) + 1 || "?"
-                                }`
-                              : " - Focus: 50/50"
-                          }`
-                    }`}
-                    onContextMenu={(e) => {
-                      e.preventDefault();
-
-                      // Calculate if menu should open upward
-                      const windowHeight = window.innerHeight;
-                      const clickY = e.clientY;
-                      const estimatedMenuHeight = 400; // Approximate menu height with speed options
-                      const shouldOpenUpward =
-                        clickY + estimatedMenuHeight > windowHeight;
-
-                      setContextMenu({
-                        x: e.clientX,
-                        y: e.clientY,
-                        sectionId: section.id,
-                        openUpward: shouldOpenUpward,
-                      });
-                    }}
-                  >
-                    {section.isDeleted ? (
-                      <div className="absolute inset-0 flex items-center justify-center text-xs text-red-600 font-bold">
-                        DELETED
-                      </div>
-                    ) : (
-                      <div className="absolute inset-0 flex items-center justify-center text-xs font-bold">
-                        {section.focusedParticipantId ? (
-                          <span className="text-purple-700">
-                            🎯 P
-                            {editData?.recordings.findIndex(
-                              (r) => r.id === section.focusedParticipantId
-                            ) + 1}
-                            {section.playbackSpeed !== 1.0 && (
-                              <span className="ml-1 text-xs">
-                                {section.playbackSpeed}x
-                              </span>
-                            )}
-                          </span>
-                        ) : section.playbackSpeed !== 1.0 ? (
-                          <span
-                            className={`${
-                              section.playbackSpeed < 1.0
-                                ? "text-orange-700"
-                                : "text-blue-700"
-                            }`}
-                          >
-                            {section.playbackSpeed}x
-                          </span>
-                        ) : null}
-                      </div>
-                    )}
-                  </div>
-                ))}
-
-                {/* Split point markers with interactive handles */}
-                {splitPoints.map((point, index) => (
-                  <div
-                    key={`split-${point}-${index}`}
-                    className="absolute top-0 h-full"
-                    style={{
-                      left: `${(point / duration) * 100}%`,
-                      transform: "translateX(-50%)",
-                      zIndex: 20,
-                    }}
-                  >
-                    {/* Split line */}
-                    <div className="absolute w-0.5 h-full bg-red-500" />
-
-                    {/* Interactive handle (red circle) - positioned above the line */}
-                    <div
-                      className={`absolute w-4 h-4 bg-red-500 border-2 border-white rounded-full cursor-move shadow-lg hover:bg-red-600 transition-colors ${
-                        isDraggingSplit && draggingSplitIndex === index
-                          ? "scale-125 bg-red-600"
-                          : ""
-                      }`}
-                      style={{
-                        top: "-8px", // Position above the timeline bar
-                        left: "50%",
-                        transform: "translateX(-50%)",
-                      }}
-                      title={`Split at ${point.toFixed(
-                        1
-                      )}s - Drag to move, Right-click to delete`}
-                      onMouseDown={(e) => handleSplitMouseDown(e, index)}
-                      onContextMenu={(e) => handleSplitContextMenu(e, index)}
-                    />
-                  </div>
-                ))}
-
-                {/* Current progress bar */}
-                <div
-                  className="h-full bg-blue-600 bg-opacity-30 rounded-full"
-                  style={{ width: `${(currentTime / duration) * 100}%` }}
-                />
-
-                {/* Current time marker */}
-                <div
-                  className="absolute top-0 h-full w-1 bg-blue-800 rounded z-10"
-                  style={{ left: `${(currentTime / duration) * 100}%` }}
-                />
-              </div>
-            </div>
-
-            {/* OLD Focus Controls - REMOVED
-            Focus is now integrated directly into video sections via context menu
-            */}
+            <Timeline
+              duration={duration}
+              currentTime={currentTime}
+              videoSections={videoSections}
+              splitPoints={splitPoints}
+              isSplitMode={isSplitMode}
+              isDraggingSplit={isDraggingSplit}
+              draggingSplitIndex={draggingSplitIndex}
+              recordings={editData.recordings}
+              onTimelineClick={handleTimelineClick}
+              onSplitMouseMove={handleSplitMouseMove}
+              onSplitMouseUp={handleSplitMouseUp}
+              onSectionContextMenu={handleSectionContextMenu}
+              onSplitMouseDown={handleSplitMouseDown}
+              onSplitContextMenu={handleSplitContextMenu}
+            />
           </div>
         </div>
       </div>
 
-      {/* Fixed Right Sidebar - Transcriptions */}
-      <div className="fixed right-6 top-20 bottom-6 w-80 bg-white rounded-lg shadow-lg p-4 overflow-hidden flex flex-col">
-        <h3 className="text-lg font-semibold text-gray-900 mb-4">
-          Trascrizioni
-        </h3>
+      <TranscriptionSidebar transcriptions={editData.transcriptions} />
 
-        <div className="flex-1 overflow-y-auto space-y-6">
-          {editData.transcriptions.length > 0 ? (
-            editData.transcriptions.map((transcription, index) => (
-              <div
-                key={transcription.id}
-                className="border-b border-gray-200 pb-4 last:border-b-0"
-              >
-                <h4 className="font-medium text-gray-800 mb-2">
-                  Partecipante {index + 1}
-                </h4>
-                <p className="text-sm text-gray-600 leading-relaxed whitespace-pre-wrap">
-                  {transcription.transcript_text}
-                </p>
-                <div className="text-xs text-gray-400 mt-2">
-                  {transcription.word_timestamps?.wordCount || 0} parole
-                </div>
-              </div>
-            ))
-          ) : (
-            <div className="text-center text-gray-500">
-              <p>Nessuna trascrizione disponibile</p>
-            </div>
-          )}
-        </div>
-      </div>
+      <ContextMenu
+        contextMenu={contextMenu}
+        videoSections={videoSections}
+        recordings={editData.recordings}
+        onDeleteSection={deleteSection}
+        onRestoreSection={restoreSection}
+        onSetPlaybackSpeed={setPlaybackSpeed}
+        onSetSectionFocus={setSectionFocus}
+        onDebugSaveSection={debugSaveSection}
+        onClose={() => setContextMenu(null)}
+      />
 
-      {/* Context Menu */}
-      {contextMenu && (
-        <div
-          className={`fixed bg-white shadow-lg rounded-lg border py-2 z-50 transform transition-all duration-200 ${
-            contextMenu.openUpward ? "origin-bottom" : "origin-top"
-          }`}
-          style={{
-            left: contextMenu.x,
-            ...(contextMenu.openUpward
-              ? { bottom: window.innerHeight - contextMenu.y + 10 } // Open upward with 10px margin
-              : { top: contextMenu.y }), // Normal downward opening
-          }}
-          onMouseLeave={() => setContextMenu(null)}
-        >
-          {(() => {
-            const section = videoSections.find(
-              (s) => s.id === contextMenu.sectionId
-            );
-            if (!section) return null;
+      <SplitContextMenu
+        splitContextMenu={splitContextMenu}
+        splitPoints={splitPoints}
+        onDeleteSplitPoint={deleteSplitPoint}
+        onClose={() => setSplitContextMenu(null)}
+      />
 
-            return (
-              <div>
-                <div className="px-4 py-1 text-xs text-gray-500 border-b flex items-center justify-between">
-                  <span>
-                    Sezione {section.startTime.toFixed(1)}s -{" "}
-                    {section.endTime.toFixed(1)}s
-                  </span>
-                  {contextMenu.openUpward && (
-                    <span className="text-xs text-gray-400">▲</span>
-                  )}
-                  {!contextMenu.openUpward && (
-                    <span className="text-xs text-gray-400">▼</span>
-                  )}
-                </div>
-                {section.isDeleted ? (
-                  <button
-                    className="w-full px-4 py-2 text-left hover:bg-gray-100 text-green-600"
-                    onClick={() => restoreSection(section.id)}
-                  >
-                    ↺ Ripristina Sezione
-                  </button>
-                ) : (
-                  <div>
-                    {/* Current playback speed indicator */}
-                    <div className="px-4 py-1 text-xs text-gray-400 border-b">
-                      Velocità: {section.playbackSpeed}x
-                    </div>
-
-                    {/* Speed options */}
-                    <div className="border-b mb-1">
-                      <div className="px-3 py-1 text-xs text-gray-500">
-                        Velocità riproduzione:
-                      </div>
-                      {[0.25, 0.5, 0.75, 1.0, 1.1, 1.2, 1.3, 1.5, 2.0, 4.0].map(
-                        (speed) => (
-                          <button
-                            key={speed}
-                            className={`w-full px-4 py-1 text-left hover:bg-gray-100 text-sm ${
-                              section.playbackSpeed === speed
-                                ? "bg-blue-50 text-blue-600 font-medium"
-                                : "text-gray-700"
-                            }`}
-                            onClick={() => setPlaybackSpeed(section.id, speed)}
-                          >
-                            {speed === 1.0 ? "🎬" : speed < 1.0 ? "🐌" : "⚡"}{" "}
-                            {speed}x {speed === 1.0 ? "(normale)" : ""}
-                          </button>
-                        )
-                      )}
-                    </div>
-
-                    {/* Focus section */}
-                    <div className="border-t pt-1">
-                      <div className="px-4 py-1 text-xs text-gray-400 border-b">
-                        Focus:{" "}
-                        {section.focusedParticipantId
-                          ? editData?.recordings.find(
-                              (r) => r.id === section.focusedParticipantId
-                            )
-                            ? `Partecipante ${
-                                editData.recordings.findIndex(
-                                  (r) => r.id === section.focusedParticipantId
-                                ) + 1
-                              }`
-                            : "Sconosciuto"
-                          : "Nessuno (50/50)"}
-                      </div>
-
-                      {/* No focus option */}
-                      <button
-                        className={`w-full px-4 py-1 text-left hover:bg-gray-100 text-sm ${
-                          !section.focusedParticipantId
-                            ? "bg-blue-50 text-blue-600 font-medium"
-                            : "text-gray-700"
-                        }`}
-                        onClick={() => setSectionFocus(section.id, undefined)}
-                      >
-                        👥 Nessun Focus (50/50)
-                      </button>
-
-                      {/* Participant focus options */}
-                      {editData?.recordings.map((recording, index) => (
-                        <button
-                          key={recording.id}
-                          className={`w-full px-4 py-1 text-left hover:bg-gray-100 text-sm ${
-                            section.focusedParticipantId === recording.id
-                              ? "bg-blue-50 text-blue-600 font-medium"
-                              : "text-gray-700"
-                          }`}
-                          onClick={() =>
-                            setSectionFocus(section.id, recording.id)
-                          }
-                        >
-                          🎯 Partecipante {index + 1}
-                        </button>
-                      ))}
-                    </div>
-
-                    <button
-                      className="w-full px-4 py-2 text-left hover:bg-gray-100 text-red-600 border-t"
-                      onClick={() => deleteSection(section.id)}
-                    >
-                      🗑️ Elimina Sezione
-                    </button>
-
-                    {/* Debug button - remove when fixed */}
-                    <div className="border-t mb-1">
-                      <button
-                        className="w-full px-4 py-2 text-left hover:bg-gray-100 text-purple-600 text-sm"
-                        onClick={() => debugSaveSection(section.id, 0.5)}
-                      >
-                        🚨 DEBUG: Test Save 0.5x
-                      </button>
-                    </div>
-                  </div>
-                )}
-              </div>
-            );
-          })()}
-        </div>
-      )}
-
-      {/* Split Point Context Menu */}
-      {splitContextMenu && (
-        <div
-          className="fixed bg-white shadow-lg rounded-lg border py-2 z-50"
-          style={{
-            left: splitContextMenu.x,
-            top: splitContextMenu.y,
-          }}
-          onMouseLeave={() => setSplitContextMenu(null)}
-        >
-          <div className="px-4 py-1 text-xs text-gray-500 border-b">
-            Split Point {splitContextMenu.splitIndex + 1} -{" "}
-            {splitPoints[splitContextMenu.splitIndex]?.toFixed(1)}s
-          </div>
-          <button
-            className="w-full px-4 py-2 text-left hover:bg-gray-100 text-red-600"
-            onClick={() => deleteSplitPoint(splitContextMenu.splitIndex)}
-          >
-            🗑️ Elimina Split Point
-          </button>
-        </div>
-      )}
-
-      {/* Export Modal */}
-      {showExportModal && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white rounded-lg shadow-xl p-6 w-full max-w-md mx-4">
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-semibold text-gray-900">
-                Esporta Video
-              </h3>
-              <button
-                onClick={() => setShowExportModal(false)}
-                className="text-gray-400 hover:text-gray-600"
-                disabled={isExporting}
-              >
-                ✕
-              </button>
-            </div>
-
-            {isExporting || exportStatus.stage === 'completed' ? (
-              // Export Progress
-              <div className="space-y-4">
-                {exportStatus.stage !== 'completed' && (
-                  <div className="flex items-center space-x-3">
-                    <div className="animate-spin rounded-full h-5 w-5 border-b-2 border-purple-600"></div>
-                    <span className="text-sm text-gray-600">
-                      {exportStatus.message}
-                    </span>
-                  </div>
-                )}
-
-                {exportStatus.stage !== 'completed' && (
-                  <>
-                    <div className="w-full bg-gray-200 rounded-full h-2">
-                      <div
-                        className="bg-purple-600 h-2 rounded-full transition-all duration-300"
-                        style={{ width: `${exportStatus.percentage}%` }}
-                      ></div>
-                    </div>
-
-                    <div className="text-center">
-                      <p className="text-sm text-gray-500 mb-3">
-                        {exportStatus.percentage}% completato
-                      </p>
-                      <Button onClick={cancelExport} variant="outline" size="sm">
-                        Annulla
-                      </Button>
-                    </div>
-                  </>
-                )}
-
-                {exportStatus.stage === "completed" &&
-                  exportStatus.downloadUrl && (
-                    <div className="text-center pt-4 border-t">
-                      <p className="text-green-600 mb-4">
-                        ✅ Export completato con successo!
-                      </p>
-
-                      <div className="space-y-3">
-                        {/* Download Button */}
-                        <Button
-                          onClick={() => {
-                            downloadVideo();
-                            setShowExportModal(false);
-                            resetExport();
-                          }}
-                          className="bg-green-600 hover:bg-green-700 w-full"
-                        >
-                          <Download className="h-4 w-4 mr-2" />
-                          Scarica Video
-                        </Button>
-
-                        {/* Copy Link Button */}
-                        <Button
-                          onClick={async () => {
-                            const success = await copyDownloadLink();
-                            if (success) {
-                              setLinkCopied(true);
-                              setTimeout(() => setLinkCopied(false), 2000);
-                            }
-                          }}
-                          variant="outline"
-                          className="w-full"
-                        >
-                          {linkCopied ? (
-                            <>
-                              <CheckCircle className="h-4 w-4 mr-2 text-green-600" />
-                              Link Copiato!
-                            </>
-                          ) : (
-                            <>
-                              <Link className="h-4 w-4 mr-2" />
-                              Copia Link Download
-                            </>
-                          )}
-                        </Button>
-
-                        {/* Close Button */}
-                        <Button
-                          onClick={() => {
-                            setShowExportModal(false);
-                            resetExport();
-                          }}
-                          variant="ghost"
-                          size="sm"
-                          className="text-gray-500"
-                        >
-                          Chiudi
-                        </Button>
-                      </div>
-                    </div>
-                  )}
-
-                {exportStatus.stage === "failed" && (
-                  <div className="text-center pt-4 border-t">
-                    <p className="text-red-600 mb-2">❌ Export fallito</p>
-                    <p className="text-sm text-gray-500 mb-3">
-                      {exportStatus.error}
-                    </p>
-                    <Button
-                      onClick={() => {
-                        setShowExportModal(false);
-                        resetExport();
-                      }}
-                      variant="outline"
-                    >
-                      Chiudi
-                    </Button>
-                  </div>
-                )}
-              </div>
-            ) : (
-              // Export Settings
-              <div className="space-y-4">
-                <div className="space-y-2">
-                  <label className="text-sm font-medium text-gray-700">
-                    Qualità Video
-                  </label>
-                  <select className="w-full p-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-purple-500 focus:border-transparent">
-                    <option value="720p">720p (Recommended)</option>
-                    <option value="1080p">1080p (High Quality)</option>
-                    <option value="4k">4K (Premium)</option>
-                  </select>
-                </div>
-
-                <div className="space-y-2">
-                  <label className="text-sm font-medium text-gray-700">
-                    Formato
-                  </label>
-                  <select className="w-full p-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-purple-500 focus:border-transparent">
-                    <option value="mp4">MP4 (Recommended)</option>
-                    <option value="webm">WebM</option>
-                  </select>
-                </div>
-
-                <div className="flex items-center space-x-2">
-                  <input
-                    type="checkbox"
-                    id="includeSubtitles"
-                    defaultChecked
-                    className="rounded border-gray-300 text-purple-600 focus:ring-purple-500"
-                  />
-                  <label
-                    htmlFor="includeSubtitles"
-                    className="text-sm text-gray-700"
-                  >
-                    Includi sottotitoli
-                  </label>
-                </div>
-
-                <div className="bg-gray-50 p-3 rounded-md">
-                  <div className="text-sm text-gray-600">
-                    <div className="flex justify-between">
-                      <span>Durata originale:</span>
-                      <span>
-                        {Math.floor(duration / 60)}:
-                        {(duration % 60).toFixed(0).padStart(2, "0")}
-                      </span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span>Durata finale:</span>
-                      <span>
-                        {Math.floor(
-                          videoSections
-                            .filter((s) => !s.isDeleted)
-                            .reduce(
-                              (acc, s) => acc + (s.endTime - s.startTime),
-                              0
-                            ) / 60
-                        )}
-                        :
-                        {(
-                          videoSections
-                            .filter((s) => !s.isDeleted)
-                            .reduce(
-                              (acc, s) => acc + (s.endTime - s.startTime),
-                              0
-                            ) % 60
-                        )
-                          .toFixed(0)
-                          .padStart(2, "0")}
-                      </span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span>Sezioni eliminate:</span>
-                      <span>
-                        {videoSections.filter((s) => s.isDeleted).length}
-                      </span>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="flex space-x-3">
-                  <Button
-                    onClick={() => setShowExportModal(false)}
-                    variant="outline"
-                    className="flex-1"
-                  >
-                    Annulla
-                  </Button>
-                  <Button
-                    onClick={() => {
-                      const settings: ExportSettings = {
-                        format: "mp4",
-                        quality: "720p",
-                        framerate: 30,
-                        includeSubtitles: true,
-                      };
-                      startExport(roomId, settings);
-                    }}
-                    className="flex-1 bg-purple-600 hover:bg-purple-700"
-                  >
-                    <Download className="h-4 w-4 mr-2" />
-                    Inizia Export
-                  </Button>
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
+      <ExportModal
+        isOpen={showExportModal}
+        isExporting={isExporting}
+        exportStatus={exportStatus}
+        duration={duration}
+        videoSections={videoSections}
+        linkCopied={linkCopied}
+        onClose={() => setShowExportModal(false)}
+        onStartExport={startExport}
+        onCancelExport={cancelExport}
+        onDownloadVideo={downloadVideo}
+        onCopyDownloadLink={copyDownloadLink}
+        onResetExport={resetExport}
+        onLinkCopiedChange={setLinkCopied}
+        roomId={roomId}
+      />
     </div>
   );
 }

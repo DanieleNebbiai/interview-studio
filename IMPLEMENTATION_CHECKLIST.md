@@ -203,5 +203,55 @@
 
 ---
 
+---
+
+## 📅 Status Aggiornamenti Recenti
+
+### ✅ COMPLETATO (Ultimissimi Update)
+- [x] **Fix focus application durante export** - Focus ora funziona correttamente nel video finale
+- [x] **Fix subtitle timing con sezioni eliminate** - Timestamp corretti automaticamente
+- [x] **Sistema download completo** - Modal con download e copia link
+- [x] **Railway worker ottimizzato** - Memory management per video lunghi
+- [x] **Documentazione completa** - DOCUMENTATION.md e EXPORT_FIXES_LOG.md aggiornati
+
+### ✅ COMPLETATO (Current Sprint)
+- [x] **UI/UX Refactoring** - Homepage migrata a shadcn/ui components
+- [x] **Homepage Component Split** - 7 componenti React separati e riutilizzabili
+- [x] **Rimozione colori hardcoded** - Preparazione per design system centralizzato
+
+### 🔄 IN PROGRESS (Current Sprint)
+- [ ] **Design System** - Configurazione colori tramite globals.css (NON nei componenti)
+- [ ] **Migrazione pagine rimanenti** - /recordings e /edit con shadcn components
+
+---
+
+## 🎯 PROSSIMI PASSI (UI Refactoring Sprint)
+
+### 📱 Homepage Refactoring
+- [x] Migrazione Button → shadcn Button component
+- [x] Input fields → shadcn Input component
+- [x] Loading states → shadcn Skeleton component
+- [x] Auth modal → shadcn Dialog component
+- [x] Cards → shadcn Card component
+- [x] **IMPORTANTE: Tutti i colori personalizzati rimossi - configurare via globals.css**
+
+### 🧩 Component Architecture
+- [x] `/components/home/` - Homepage components dedicati (7 componenti creati)
+- [x] `/components/ui/` - shadcn components (già presente)
+- [ ] `/components/common/` - Componenti condivisi globali
+- [x] `/lib/utils.ts` - Utility functions e helpers (già presente)
+
+### 🎨 Design System
+- [ ] **Color palette standardizzata via globals.css** (NON personalizzare nei componenti)
+- [ ] Typography scale con shadcn
+- [ ] Spacing tokens consistency
+- [ ] Animation/transition library
+
+### ⚠️ IMPORTANTE - Color Management
+**NON aggiungere colori personalizzati direttamente nei componenti React/shadcn. Tutta la personalizzazione colori deve essere fatta tramite globals.css per mantenere consistenza del design system.**
+
+---
+
 **Ultimo Update**: 2025-09-16
-**Stato Progetto**: Core editing completo, Export System mancante per MVP
+**Stato Progetto**: ✅ **Core MVP Completato** - Focus su UI/UX refactoring
+**Branch Attuale**: `refactor/project-improvements`

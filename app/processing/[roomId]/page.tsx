@@ -2,9 +2,12 @@
 
 import { useState, useEffect, useRef } from "react";
 import { useParams, useRouter } from "next/navigation";
-import { Button } from "@/components/ui/button";
-import { Progress } from "@/components/ui/progress";
-import { CheckCircle, Clock, Home, AlertCircle } from "lucide-react";
+import { ProcessingLoader } from "@/components/processing/ProcessingLoader";
+import { ProcessingHeader } from "@/components/processing/ProcessingHeader";
+import { ProcessingError } from "@/components/processing/ProcessingError";
+import { ProcessingSteps } from "@/components/processing/ProcessingSteps";
+import { ProcessingProgress } from "@/components/processing/ProcessingProgress";
+import { ProcessingActions } from "@/components/processing/ProcessingActions";
 
 interface RecordingInstance {
   instanceId: string;
@@ -323,31 +326,17 @@ export default function ProcessingPage() {
     }
   };
 
-  const getStepIcon = (step: ProcessingStep) => {
-    switch (step.status) {
-      case "completed":
-        return <CheckCircle className="h-6 w-6 text-green-600" />;
-      case "processing":
-        return <Clock className="h-6 w-6 text-blue-600 animate-spin" />;
-      case "error":
-        return <AlertCircle className="h-6 w-6 text-red-600" />;
-      default:
-        return (
-          <div className="h-6 w-6 border-2 border-gray-300 rounded-full" />
-        );
-    }
-  };
 
   const goHome = () => {
     router.push("/");
   };
 
+  const goToEditor = () => {
+    router.push(`/edit/${roomId}`);
+  };
+
   if (!processingData && !error) {
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-purple-50 flex items-center justify-center">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
-      </div>
-    );
+    return <ProcessingLoader />;
   }
 
   return (
@@ -355,83 +344,23 @@ export default function ProcessingPage() {
       <div className="container mx-auto px-4 py-16">
         <div className="max-w-2xl mx-auto">
           <div className="bg-white rounded-2xl shadow-lg p-8">
-            <div className="text-center mb-8">
-              <h1 className="text-3xl font-bold text-gray-900 mb-4">
-                Processing Registrazioni
-              </h1>
-              <p className="text-gray-600">
-                Room: <span className="font-mono font-medium">{roomId}</span>
-              </p>
-            </div>
+            <ProcessingHeader roomId={roomId} />
 
-            {error && (
-              <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-6">
-                <div className="flex items-center space-x-2">
-                  <AlertCircle className="h-5 w-5 text-red-600" />
-                  <span className="text-red-800 font-medium">Errore</span>
-                </div>
-                <p className="text-red-700 mt-1">{error}</p>
-              </div>
-            )}
+            {error && <ProcessingError error={error} />}
 
-            <div className="space-y-4 mb-8">
-              {steps.map((step) => (
-                <div
-                  key={step.id}
-                  className={`flex items-center space-x-4 p-4 rounded-lg ${
-                    step.status === "completed"
-                      ? "bg-green-50"
-                      : step.status === "processing"
-                      ? "bg-blue-50"
-                      : step.status === "error"
-                      ? "bg-red-50"
-                      : "bg-gray-50"
-                  }`}
-                >
-                  {getStepIcon(step)}
-                  <div className="flex-1">
-                    <h3 className="font-medium text-gray-900">{step.name}</h3>
-                    {step.message && (
-                      <p className="text-sm text-gray-600">{step.message}</p>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
+            <ProcessingSteps steps={steps} />
 
-            {isProcessing && (
-              <div className="mb-6">
-                <div className="flex items-center justify-between mb-2">
-                  <span className="text-sm font-medium text-gray-700">
-                    Progresso
-                  </span>
-                  <span className="text-sm text-gray-500">
-                    {currentStep + 1} / {steps.length}
-                  </span>
-                </div>
-                <Progress
-                  value={((currentStep + 1) / steps.length) * 100}
-                  className="h-2"
-                />
-              </div>
-            )}
+            <ProcessingProgress
+              currentStep={currentStep}
+              totalSteps={steps.length}
+              isProcessing={isProcessing}
+            />
 
-            <div className="flex space-x-4">
-              <Button onClick={goHome} variant="outline" className="flex-1">
-                <Home className="h-4 w-4 mr-2" />
-                Torna alla Home
-              </Button>
-
-              {steps[steps.length - 1].status === "completed" && (
-                <Button
-                  onClick={() => router.push(`/edit/${roomId}`)}
-                  className="flex-1 bg-green-600 hover:bg-green-700"
-                >
-                  <CheckCircle className="h-4 w-4 mr-2" />
-                  Vai all&apos;Editor
-                </Button>
-              )}
-            </div>
+            <ProcessingActions
+              isCompleted={steps[steps.length - 1].status === "completed"}
+              onGoHome={goHome}
+              onGoToEditor={goToEditor}
+            />
           </div>
         </div>
       </div>

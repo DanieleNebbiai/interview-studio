@@ -2,9 +2,14 @@
 
 import { useState, useEffect } from 'react'
 import { Button } from '@/components/ui/button'
-import { Play, Download, Sparkles, Clock, ArrowLeft, Search, FileText } from 'lucide-react'
+import { ArrowLeft } from 'lucide-react'
 import Link from 'next/link'
 import { useAuth } from '@/contexts/AuthContext'
+import { SearchBar } from '@/components/recordings/SearchBar'
+import { RecordingCard } from '@/components/recordings/RecordingCard'
+import { EmptyState } from '@/components/recordings/EmptyState'
+import { LoadingSpinner } from '@/components/recordings/LoadingSpinner'
+import { AuthRequired } from '@/components/recordings/AuthRequired'
 
 interface Recording {
   id: string
@@ -95,8 +100,10 @@ export default function RecordingsPage() {
     }
   }
 
-  const searchRecordings = async () => {
-    if (!roomSearch.trim()) {
+  const searchRecordings = async (query: string) => {
+    setRoomSearch(query)
+
+    if (!query.trim()) {
       fetchRecordings()
       return
     }
@@ -105,7 +112,7 @@ export default function RecordingsPage() {
       setLoading(true)
       setError(null)
 
-      const response = await fetch(`/api/recordings/search?q=${encodeURIComponent(roomSearch)}`, {
+      const response = await fetch(`/api/recordings/search?q=${encodeURIComponent(query)}`, {
         credentials: 'include'
       })
 
@@ -181,24 +188,6 @@ export default function RecordingsPage() {
     }
   }
 
-  const formatDuration = (seconds: number) => {
-    const hours = Math.floor(seconds / 3600)
-    const minutes = Math.floor((seconds % 3600) / 60)
-    if (hours > 0) {
-      return `${hours}h ${minutes}m`
-    }
-    return `${minutes}m`
-  }
-
-  const formatDate = (dateString: string) => {
-    return new Date(dateString).toLocaleDateString('it-IT', {
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-    })
-  }
 
   const filteredRecordings = recordings.filter(recording => {
     const roomName = recording.room?.name || recording.room?.daily_room_name || ''
@@ -207,28 +196,12 @@ export default function RecordingsPage() {
 
   // Loading state
   if (authLoading || loading) {
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-purple-50 flex items-center justify-center">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
-      </div>
-    )
+    return <LoadingSpinner />
   }
 
   // Authentication required
   if (!user) {
-    return (
-      <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-purple-50 flex items-center justify-center">
-        <div className="text-center">
-          <h1 className="text-2xl font-bold text-gray-900 mb-4">Accesso Richiesto</h1>
-          <p className="text-gray-600 mb-6">Devi essere autenticato per visualizzare le registrazioni</p>
-          <Link href="/">
-            <Button className="bg-blue-600 hover:bg-blue-700">
-              Torna alla Home
-            </Button>
-          </Link>
-        </div>
-      </div>
-    )
+    return <AuthRequired />
   }
 
   return (
@@ -238,7 +211,7 @@ export default function RecordingsPage() {
           <div className="flex items-center justify-between mb-8">
             <div className="flex items-center space-x-4">
               <Link href="/">
-                <Button variant="outline" className="bg-white">
+                <Button variant="outline">
                   <ArrowLeft className="h-4 w-4 mr-2" />
                   Home
                 </Button>
@@ -253,180 +226,21 @@ export default function RecordingsPage() {
             </div>
           )}
 
-          <div className="bg-white rounded-lg shadow-md p-6 mb-8">
-            <div className="flex gap-4">
-              <div className="flex-1">
-                <input
-                  type="text"
-                  placeholder="Cerca per nome room..."
-                  value={roomSearch}
-                  onChange={(e) => setRoomSearch(e.target.value)}
-                  className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
-                  onKeyDown={(e) => e.key === 'Enter' && searchRecordings()}
-                />
-              </div>
-              <Button 
-                onClick={searchRecordings}
-                disabled={loading}
-                className="bg-blue-600 hover:bg-blue-700 px-6"
-              >
-                <Search className="h-4 w-4 mr-2" />
-                {loading ? 'Cercando...' : 'Cerca'}
-              </Button>
-            </div>
-          </div>
+          <SearchBar onSearch={searchRecordings} loading={loading} />
 
           <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6">
             {filteredRecordings.map((recording) => (
-              <div key={recording.id} className="bg-white rounded-lg shadow-lg overflow-hidden">
-                <div className="relative">
-                  <div className="w-full h-48 bg-gradient-to-br from-blue-100 to-purple-100 flex items-center justify-center">
-                    <div className="text-center">
-                      <Play className="h-16 w-16 text-blue-600 mx-auto mb-2" />
-                      <p className="text-blue-800 font-medium">
-                        {recording.room?.name || recording.room?.daily_room_name || 'Recording'}
-                      </p>
-                    </div>
-                  </div>
-                  <div className="absolute top-4 right-4 bg-black/70 text-white px-2 py-1 rounded text-sm">
-                    {formatDuration(recording.duration)}
-                  </div>
-                  <div className="absolute top-4 left-4 bg-green-600 text-white px-2 py-1 rounded text-xs capitalize">
-                    {recording.status}
-                  </div>
-                </div>
-
-                <div className="p-6">
-                  <h3 className="font-semibold text-lg mb-2">
-                    {recording.room?.name || recording.room?.daily_room_name || 'Recording'}
-                  </h3>
-                  
-                  <div className="flex items-center text-gray-600 text-sm mb-2">
-                    <Clock className="h-4 w-4 mr-1" />
-                    {formatDate(recording.created_at)}
-                  </div>
-
-                  <div className="flex items-center text-gray-600 text-sm mb-4">
-                    <Download className="h-4 w-4 mr-1" />
-                    {Math.round(recording.file_size / (1024 * 1024))} MB
-                  </div>
-
-                  {/* Show transcription preview if available */}
-                  {recording.transcriptions && recording.transcriptions.length > 0 && (
-                    <div className="bg-gray-50 rounded-lg p-3 mb-4">
-                      <div className="flex items-center justify-between mb-2">
-                        <span className="text-sm font-medium text-gray-700 flex items-center">
-                          <FileText className="h-4 w-4 mr-1" />
-                          Trascrizione
-                        </span>
-                        <span className="text-xs text-gray-500">
-                          {Math.round(recording.transcriptions[0].confidence * 100)}% confidenza
-                        </span>
-                      </div>
-                      <p className="text-sm text-gray-600 line-clamp-2">
-                        {recording.transcriptions[0].transcript_text}
-                      </p>
-                      <div className="text-xs text-gray-500 mt-1">
-                        {recording.transcriptions[0].word_timestamps?.wordCount || 0} parole • {recording.transcriptions[0].language}
-                      </div>
-                    </div>
-                  )}
-
-                  <div className="space-y-3">
-                    <div className="flex space-x-2">
-                      {recording.recording_url ? (
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="flex-1"
-                          onClick={() => window.open(recording.recording_url, '_blank')}
-                        >
-                          <Download className="h-4 w-4 mr-1" />
-                          Download
-                        </Button>
-                      ) : (
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          className="flex-1"
-                          disabled
-                        >
-                          <Download className="h-4 w-4 mr-1" />
-                          Non disponibile
-                        </Button>
-                      )}
-                      
-                      {recording.transcriptions && recording.transcriptions.length > 0 && (
-                        <Button
-                          size="sm"
-                          variant="outline"
-                          onClick={() => {/* TODO: Open transcript viewer */}}
-                        >
-                          <FileText className="h-4 w-4 mr-1" />
-                          Visualizza
-                        </Button>
-                      )}
-                    </div>
-
-                    {aiJobs[recording.id] ? (
-                      <div className="bg-gray-50 rounded-lg p-4">
-                        {aiJobs[recording.id].status === 'processing' ? (
-                          <div>
-                            <div className="flex items-center justify-between text-sm mb-2">
-                              <span className="text-blue-600 font-medium">Montaggio AI in corso...</span>
-                              <span>{Math.round(aiJobs[recording.id].progress)}%</span>
-                            </div>
-                            <div className="w-full bg-gray-200 rounded-full h-2">
-                              <div 
-                                className="bg-blue-600 h-2 rounded-full transition-all duration-300"
-                                style={{ width: `${aiJobs[recording.id].progress}%` }}
-                              />
-                            </div>
-                          </div>
-                        ) : (
-                          <div className="text-center">
-                            <div className="text-green-600 font-medium mb-2">✓ Montaggio completato!</div>
-                            <Button
-                              size="sm"
-                              className="bg-green-600 hover:bg-green-700"
-                              onClick={() => window.open(aiJobs[recording.id].editedVideoUrl, '_blank')}
-                            >
-                              <Download className="h-4 w-4 mr-1" />
-                              Scarica Video Montato
-                            </Button>
-                          </div>
-                        )}
-                      </div>
-                    ) : (
-                      <Button
-                        className="w-full bg-purple-600 hover:bg-purple-700"
-                        onClick={() => startAIEdit(recording.id)}
-                      >
-                        <Sparkles className="h-4 w-4 mr-2" />
-                        Montaggio AI
-                      </Button>
-                    )}
-                  </div>
-                </div>
-              </div>
+              <RecordingCard
+                key={recording.id}
+                recording={recording}
+                aiJob={aiJobs[recording.id]}
+                onStartAIEdit={startAIEdit}
+              />
             ))}
           </div>
 
           {filteredRecordings.length === 0 && (
-            <div className="text-center py-12">
-              <div className="bg-gray-100 rounded-full w-24 h-24 flex items-center justify-center mx-auto mb-4">
-                <Play className="h-12 w-12 text-gray-400" />
-              </div>
-              <h2 className="text-xl font-semibold text-gray-700 mb-2">Nessuna registrazione trovata</h2>
-              <p className="text-gray-500 mb-6">
-                {roomSearch ? 'Prova con un nome room diverso' : 'Le tue registrazioni appariranno qui dopo le videoconferenze'}
-              </p>
-              <Link href="/">
-                <Button className="bg-blue-600 hover:bg-blue-700">
-                  Crea Nuova Intervista
-                </Button>
-              </Link>
-            </div>
+            <EmptyState hasSearchQuery={!!roomSearch} />
           )}
         </div>
       </div>

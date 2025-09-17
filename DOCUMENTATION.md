@@ -1,17 +1,101 @@
-# Interview Studio - Documentazione Tecnica
+# Interview Studio - Documentazione Completa
 
-## Panoramica
-Interview Studio è una webapp per registrare e editare video interviste professionali. Permette agli utenti di creare room di registrazione, invitare partecipanti, processare automaticamente le registrazioni con trascrizione AI, e editare il video finale prima del download.
+## 🎯 Panoramica del Progetto
 
-## Architettura Tecnica
+**Interview Studio** è una piattaforma completa per registrare, elaborare e editare video interviste professionali. La webapp permette di:
 
-### Stack Tecnologico
-- **Frontend**: Next.js 14, React, TypeScript, Tailwind CSS
-- **Backend**: Next.js API Routes
-- **Database**: Supabase (PostgreSQL)
-- **Video Recording**: Daily.co API
-- **Trascrizione**: OpenAI Whisper API
-- **File Storage**: Locale per processing, cloud per export
+- **Registrare** interviste multi-partecipante con tracce video/audio separate
+- **Processare** automaticamente le registrazioni con trascrizione AI (OpenAI Whisper)
+- **Editare** i video con timeline interattiva, gestione focus, velocità e eliminazione sezioni
+- **Esportare** video finali con modifiche applicate, sottotitoli sincronizzati e focus dinamico
+
+### 🎥 Funzionalità Principali
+
+#### 1. **Sistema di Registrazione**
+- Integrazione con **Daily.co** per video conferencing professionale
+- Registrazione **multi-track** separata per ogni partecipante
+- **Room management** con inviti via link condivisibile
+- Qualità video **broadcast-ready** (fino a 1080p)
+
+#### 2. **Processing Pipeline Automatizzata**
+- **Download automatico** registrazioni da Daily.co con polling intelligente
+- **Trascrizione AI** con OpenAI Whisper (word-level timestamps)
+- **Sincronizzazione video** multi-partecipante basata su timestamp
+- **Salvataggio strutturato** su database Supabase
+
+#### 3. **Editor Video Interattivo**
+- **Timeline sincronizzata** con anteprima real-time di tutti i partecipanti
+- **Gestione sezioni**: eliminazione, modifica velocità (0.5x-3x), focus partecipante
+- **Split points** interattivi con drag & drop per divisione timeline
+- **Auto-save** con debouncing e gestione conflitti
+- **Context menu** per azioni rapide su sezioni e split
+
+#### 4. **Sistema Export Avanzato**
+- **Rendering video** con FFmpeg su Railway worker dedicato
+- **Gestione memoria** ottimizzata per video lunghi (chunk processing)
+- **Focus dinamico**: switch automatico tra partecipanti basato su editing
+- **Sottotitoli sincronizzati** con timing corretto per sezioni eliminate
+- **Multiple output** con Cloudflare R2 storage e download diretto
+
+#### 5. **Autenticazione e Gestione Utenti**
+- Sistema auth con **Supabase Auth** (Google, email/password)
+- **Gestione sessioni** e permessi per room private
+- **Cronologia registrazioni** personale con metadata dettagliati
+
+### 🏗️ Architettura del Sistema
+
+```
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│   Frontend      │    │   Backend API    │    │  External APIs  │
+│   Next.js 14    │◄──►│  Next.js Routes  │◄──►│   Daily.co      │
+│   React/TS      │    │  Supabase        │    │   OpenAI        │
+│   Tailwind/UI   │    │  Authentication  │    │   Railway       │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+          │                       │                       │
+          │                       ▼                       │
+          │            ┌──────────────────┐               │
+          │            │   Database       │               │
+          └───────────►│   PostgreSQL     │◄──────────────┘
+                      │   (Supabase)     │
+                      └──────────────────┘
+                               │
+                               ▼
+                    ┌─────────────────────┐
+                    │   Export Worker     │
+                    │   FFmpeg/Node.js    │
+                    │   (Railway)         │
+                    └─────────────────────┘
+                               │
+                               ▼
+                    ┌─────────────────────┐
+                    │   File Storage      │
+                    │   Cloudflare R2     │
+                    │   (CDN Delivery)    │
+                    └─────────────────────┘
+```
+
+## 🔧 Stack Tecnologico Completo
+
+### Frontend Stack
+- **Framework**: Next.js 14 con App Router
+- **UI Library**: React 18 + TypeScript
+- **Styling**: Tailwind CSS + shadcn/ui components
+- **State Management**: React hooks (useState, useEffect, custom hooks)
+- **Animations**: Tailwind transitions + Lucide React icons
+
+### Backend Stack
+- **API**: Next.js 14 API Routes (serverless)
+- **Database**: Supabase PostgreSQL con RLS (Row Level Security)
+- **Authentication**: Supabase Auth (Google OAuth, Email/Password)
+- **File Upload**: Multipart form data handling
+- **Queue System**: Supabase-based job queue per export
+
+### External Services
+- **Video Conferencing**: Daily.co REST API + WebRTC SDK
+- **AI Transcription**: OpenAI Whisper API (whisper-1 model)
+- **Video Processing**: FFmpeg su Railway worker dedicato
+- **File Storage**: Cloudflare R2 (S3-compatible) + CDN
+- **Deployment**: Vercel (frontend/API) + Railway (worker)
 
 ### Flusso Principale
 

@@ -1,13 +1,103 @@
-# Export Worker Fixes - Railway Deployment Log
+# Railway Export Worker - Documentazione Completa
 
-## Original Problem
-- 48-second video with 2 sections (0-21s at 1.5x speed, 21-48s at 1x speed)
-- Expected final duration: ~37 seconds (14.3s + 21.1s = 35.4s)
-- **ACTUAL RESULT**: 57-62 seconds consistently
+## 🎯 Panoramica Sistema Export
 
-## Issues Encountered
-1. **Duration Issue**: Video exports to wrong duration (57s instead of 37s)
-2. **Focus Issue**: Focus overlays not being applied
+Il sistema di export di Interview Studio utilizza un **worker dedicato** su Railway per il processing video intensivo, separato dal frontend Next.js su Vercel per ottimizzare performance e gestire i limiti di memoria.
+
+### 🏗️ Architettura Export
+```
+┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
+│   Frontend      │    │   Supabase       │    │   Railway       │
+│   (Vercel)      │────►│   Job Queue      │────►│   FFmpeg Worker │
+│   /api/export   │    │   export_jobs    │    │   Node.js       │
+└─────────────────┘    └──────────────────┘    └─────────────────┘
+          │                       │                       │
+          │                       │                       ▼
+          │                       │            ┌─────────────────┐
+          │                       │            │  Cloudflare R2  │
+          └───────────────────────┼───────────►│   File Storage  │
+                                  │            │   CDN Delivery  │
+                                  │            └─────────────────┘
+                                  │
+                    ┌─────────────┴──────────┐
+                    │    Status Polling      │
+                    │  /api/export/status/   │
+                    │   Real-time Updates    │
+                    └────────────────────────┘
+```
+
+## ⚙️ Worker Railway - Funzionamento Interno
+
+### Limitazioni Tecniche Critiche
+- **Memoria Massima**: ~512MB prima di SIGKILL
+- **CPU**: Condivisa, non dedicata
+- **Storage Temporaneo**: Limitato, cleanup automatico necessario
+- **Timeout**: Max 30 minuti per job
+- **Concorrenza**: Un job alla volta per gestire memoria
+
+### Pipeline di Processing
+
+#### **Phase 1: Chunk Processing (Memory-Safe)**
+```javascript
+// Break video into manageable chunks
+const CHUNK_MAX_DURATION = 30; // seconds
+const chunks = createChunksFromSections(videoSections, CHUNK_MAX_DURATION);
+
+// Process each chunk sequentially
+for (const chunk of chunks) {
+  await processChunk(chunk); // Max 128MB memory usage
+  await gcDelay(2000); // Force garbage collection
+}
+```
+
+#### **Phase 2: Concatenation & Export**
+```javascript
+// File-based concatenation (memory efficient)
+await concatenateChunksMemorySafe(chunkFiles);
+
+// Add subtitles in separate pass
+await addSubtitlesToVideo(tempFile, finalFile, subtitleFile);
+
+// Upload to Cloudflare R2
+await uploadToStorage(finalFile);
+```
+
+## ⚠️ Punti Critici di Attenzione
+
+### 🔥 Memory Management (PRIORITÀ MASSIMA)
+- **SIGKILL Railway**: Se memoria >512MB → processo terminato istantaneamente
+- **Chunk Size**: NEVER >30 secondi per chunk
+- **Processing**: SEMPRE sequenziale, mai parallelo
+- **GC Strategy**: Pause 2s + `global.gc()` tra ogni chunk
+- **Monitoring**: Log memory usage ad ogni step
+
+```javascript
+// ✅ CORRETTO - Memory safe
+const CHUNK_MAX_DURATION = 30;
+await processChunk(chunk);
+await new Promise(resolve => setTimeout(resolve, 2000));
+if (global.gc) global.gc();
+
+// ❌ ERRORE - Causa SIGKILL
+const chunks = await Promise.all(chunkArray.map(processChunk));
+```
+
+### 🎬 Focus System (Già Risolto)
+- **Mapping**: `recording.id` → `video_sections.focused_participant_id`
+- **Timeline**: Focus applica full-screen overlay durante export
+- **Conversione**: `recordingVideoMap[recording.id] = videoIndex`
+
+### ⏱️ Subtitle Timing (Già Risolto)
+- **Problema**: Timing sbagliato con sezioni eliminate
+- **Soluzione**: `convertTimestampToFinalVideo()` function
+- **Logica**: Mappa timeline originale → timeline finale post-editing
+
+### 🔄 Speed Adjustment (Funzionante)
+- **Chunk Level**: `setpts=PTS/${playbackSpeed}` + `atempo=${playbackSpeed}`
+- **Audio Sync**: SEMPRE applicare atempo insieme a setpts
+- **Concatenation**: File-based concat preserva timing
+
+## 🚨 Cronologia Problemi Risolti
 3. **Subtitle Issue**: Subtitles missing in some approaches
 4. **Memory Issue**: SIGKILL errors with large videos (1+ hour content)
 

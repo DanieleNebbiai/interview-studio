@@ -1,23 +1,12 @@
 "use client";
 
 import { useParams } from "next/navigation";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import DailyIframe, { DailyCall } from "@daily-co/daily-js";
-import { Button } from "@/components/ui/button";
-import {
-  Mic,
-  MicOff,
-  Video,
-  VideoOff,
-  Phone,
-  Circle,
-  Users,
-  ArrowLeft,
-  Square,
-  Crown,
-  Shield,
-} from "lucide-react";
-import Link from "next/link";
+import { LoadingState } from "@/components/room/LoadingState";
+import { ErrorState } from "@/components/room/ErrorState";
+import { RoomHeader } from "@/components/room/RoomHeader";
+import { CallContainer } from "@/components/room/CallContainer";
 
 interface RecordingInstance {
   instanceId: string;
@@ -50,8 +39,6 @@ export default function RoomPage() {
   const roomId = params.roomId as string;
   const callFrameRef = useRef<DailyCall | null>(null);
   const initRef = useRef<boolean>(false);
-  const [isAudioOn, setIsAudioOn] = useState(true);
-  const [isVideoOn, setIsVideoOn] = useState(true);
   const [isRecording, setIsRecording] = useState(false);
   const [participants, setParticipants] = useState<unknown[]>([]);
   const [isCreatingRoom, setIsCreatingRoom] = useState(true);
@@ -66,6 +53,38 @@ export default function RoomPage() {
     isHost: false,
     roomExists: false,
   });
+
+  // Funzione robusta per gestire il leave
+  const handleLeave = useCallback(async () => {
+    console.log("Handling leave...", {
+      isHost: permissions.isHost,
+      isRecording,
+      recordingInstancesCount: recordingInstances.length,
+    });
+
+    // Navigation logic - le registrazioni verranno gestite dal processing
+    if (permissions.isHost) {
+      console.log("Host leaving - redirecting to processing page");
+      const recordingData = {
+        roomId: roomId,
+        roomName: permissions.roomId,
+        recordings: [],
+        hadRecordingsSession: isRecording || recordingInstances.length > 0,
+      };
+      console.log("Saving processing data:", recordingData);
+      sessionStorage.setItem("processingData", JSON.stringify(recordingData));
+      window.location.href = `/processing/${roomId}`;
+    } else {
+      console.log("Guest leaving - redirecting to home");
+      window.location.href = "/";
+    }
+  }, [
+    permissions.isHost,
+    permissions.roomId,
+    isRecording,
+    recordingInstances.length,
+    roomId,
+  ]);
 
   useEffect(() => {
     if (initRef.current) return;
@@ -100,7 +119,6 @@ export default function RoomPage() {
         callFrameRef.current = null;
       }
 
-      // Create new instance only if we don't have one
       try {
         callFrameRef.current = DailyIframe.createFrame({
           iframeStyle: {
@@ -109,8 +127,27 @@ export default function RoomPage() {
             border: "none",
             borderRadius: "12px",
           },
-          showLeaveButton: false,
-          showFullscreenButton: false,
+          // Abilita i controlli nativi Daily Prebuilt ma non il leave button
+          showLeaveButton: false, // Disabilitiamo il leave button di Daily
+          showFullscreenButton: true,
+          showLocalVideo: true,
+          showParticipantsBar: true,
+          showUserNameChangeUI: true,
+          theme: {
+            colors: {
+              accent: "#2563eb",
+              accentText: "#ffffff",
+              background: "#ffffff",
+              backgroundAccent: "#f8fafc",
+              baseText: "#1e293b",
+              border: "#e2e8f0",
+              mainAreaBg: "#000000",
+              mainAreaBgAccent: "#1e293b",
+              mainAreaText: "#ffffff",
+              supportiveText: "#64748b",
+            },
+          },
+          activeSpeakerMode: true,
         });
 
         // Event listeners
@@ -136,21 +173,24 @@ export default function RoomPage() {
             // This is expected behavior for single-participant layout recordings
           })
           .on("recording-started", () => {
-            console.log(
-              "Recording started via Daily (event only, not updating UI state)"
-            );
-            // Don't update UI state here - we manage it manually
+            console.log("Recording started via Daily Prebuilt");
+            setIsRecording(true);
           })
           .on("recording-stopped", () => {
+            console.log("Recording stopped via Daily Prebuilt");
+            setIsRecording(false);
+          })
+          .on("left-meeting", () => {
             console.log(
-              "Recording stopped via Daily (event only, not updating UI state)"
+              "Left meeting via Daily Prebuilt - calling handleLeave"
             );
-            // Don't update UI state here - we manage it manually
-            // This event might fire automatically when participants leave
+            handleLeave();
           });
 
         // Join the meeting
         callFrameRef.current.join({ url });
+
+        // CSS injection sarà fatto solo dopo il join per non interferire con pre-call UI
       } catch (error) {
         console.error("Error creating Daily instance:", error);
         setIsCreatingRoom(false);
@@ -208,7 +248,7 @@ export default function RoomPage() {
         }
       }
     };
-  }, [roomId]);
+  }, [roomId, handleLeave]);
 
   const updateParticipants = () => {
     if (callFrameRef.current) {
@@ -255,7 +295,9 @@ export default function RoomPage() {
         return;
       }
 
-      console.log("Starting synchronized recording with minimal delay for timestamp capture...");
+      console.log(
+        "Starting synchronized recording with minimal delay for timestamp capture..."
+      );
 
       try {
         const response = await fetch("/api/recordings/start-synchronized", {
@@ -266,36 +308,48 @@ export default function RoomPage() {
           body: JSON.stringify({
             roomName: roomId,
             participantSessionIds: participantIds,
-            delayMs: 1000 // Minimal 1 second delay just for API processing
+            delayMs: 1000, // Minimal 1 second delay just for API processing
           }),
         });
 
         const data = await response.json();
 
         if (data.success) {
-          console.log(`Successfully started ${data.successCount} synchronized recordings`);
+          console.log(
+            `Successfully started ${data.successCount} synchronized recordings`
+          );
           console.log(`Timing spread: ${data.timingSpreadMs}ms`);
-          
-          console.log("Recording timestamps will be handled by Daily.co's start_ts field");
-          
+
+          console.log(
+            "Recording timestamps will be handled by Daily.co's start_ts field"
+          );
+
           // Convert successful results to RecordingInstance format
           const successfulRecordings: RecordingInstance[] = data.results
             .filter((result: { success: boolean }) => result.success)
-            .map((result: { instanceId: string; sessionId: string; recording?: { status?: string } }) => ({
-              instanceId: result.instanceId,
-              roomName: roomId,
-              sessionId: result.sessionId,
-              startTime: data.syncStartTime,
-              status: result.recording?.status || "active",
-            }));
+            .map(
+              (result: {
+                instanceId: string;
+                sessionId: string;
+                recording?: { status?: string };
+              }) => ({
+                instanceId: result.instanceId,
+                roomName: roomId,
+                sessionId: result.sessionId,
+                startTime: data.syncStartTime,
+                status: result.recording?.status || "active",
+              })
+            );
 
           setRecordingInstances(successfulRecordings);
           setIsRecording(true);
 
-          console.log(`Started ${successfulRecordings.length} synchronized recordings with timestamp tracking`);
+          console.log(
+            `Started ${successfulRecordings.length} synchronized recordings with timestamp tracking`
+          );
         } else {
           console.error("Synchronized recording failed:", data.error);
-          
+
           // Fallback to default room recording
           console.log("Trying fallback default room recording...");
           const fallbackResponse = await fetch("/api/recordings/start", {
@@ -312,9 +366,14 @@ export default function RoomPage() {
           const fallbackData = await fallbackResponse.json();
 
           if (fallbackData.success) {
-            console.log("Default room recording started:", fallbackData.recording);
+            console.log(
+              "Default room recording started:",
+              fallbackData.recording
+            );
             const defaultRecording: RecordingInstance = {
-              instanceId: fallbackData.recording.recordingId || fallbackData.recording.instanceId,
+              instanceId:
+                fallbackData.recording.recordingId ||
+                fallbackData.recording.instanceId,
               roomName: roomId,
               sessionId: undefined,
               startTime: new Date().toISOString(),
@@ -323,7 +382,10 @@ export default function RoomPage() {
             setRecordingInstances([defaultRecording]);
             setIsRecording(true);
           } else {
-            console.error("Fallback recording also failed:", fallbackData.error);
+            console.error(
+              "Fallback recording also failed:",
+              fallbackData.error
+            );
           }
         }
       } catch (error) {
@@ -331,20 +393,6 @@ export default function RoomPage() {
       }
     } catch (error) {
       console.error("Error starting recordings:", error);
-    }
-  };
-
-  const toggleAudio = () => {
-    if (callFrameRef.current) {
-      callFrameRef.current.setLocalAudio(!isAudioOn);
-      setIsAudioOn(!isAudioOn);
-    }
-  };
-
-  const toggleVideo = () => {
-    if (callFrameRef.current) {
-      callFrameRef.current.setLocalVideo(!isVideoOn);
-      setIsVideoOn(!isVideoOn);
     }
   };
 
@@ -463,282 +511,32 @@ export default function RoomPage() {
     }
   };
 
-  const leaveCall = async () => {
-    // Save recording state BEFORE cleanup (since stopAllRecordings clears recordingInstances)
-    const hadRecordings = recordingInstances.length > 0;
-    const recordingsSnapshot = [...recordingInstances]; // Create a copy
-
-    try {
-      if (callFrameRef.current) {
-        // First stop any active recordings gracefully
-        if (isRecording && recordingInstances.length > 0) {
-          console.log("Stopping recordings before leaving...");
-          await stopAllRecordings();
-        }
-
-        // Add a small delay to allow recording stop to complete
-        await new Promise((resolve) => setTimeout(resolve, 500));
-
-        // Then leave and destroy the call
-        try {
-          await callFrameRef.current.leave();
-        } catch (leaveError) {
-          console.warn(
-            "Error leaving call (expected if already disconnected):",
-            leaveError
-          );
-        }
-
-        try {
-          callFrameRef.current.destroy();
-        } catch (destroyError) {
-          console.warn("Error destroying call frame:", destroyError);
-        }
-
-        callFrameRef.current = null;
-      }
-    } catch (error) {
-      console.error("Error during call cleanup:", error);
-    }
-
-    // If host is leaving, always redirect to processing page (it will handle empty recordings)
-    if (permissions.isHost) {
-      console.log("Host leaving - redirecting to processing page");
-      console.log("Had recordings before cleanup:", hadRecordings);
-      console.log("Recordings snapshot:", recordingsSnapshot);
-      
-      const recordingData = {
-        roomId: roomId,
-        roomName: permissions.roomId,
-        recordings: [], // Not needed anymore - API will find by room
-        hadRecordingsSession: hadRecordings,
-      };
-
-      console.log("Saving processing data:", recordingData);
-      // Store recording data in sessionStorage for processing page
-      sessionStorage.setItem("processingData", JSON.stringify(recordingData));
-      window.location.href = `/processing/${roomId}`;
-    } else {
-      console.log("Guest leaving - redirecting to home");
-      window.location.href = "/";
-    }
-  };
-
   const copyRoomUrl = () => {
     navigator.clipboard.writeText(window.location.href);
   };
 
   if (isCreatingRoom) {
-    return (
-      <div className="min-h-screen bg-gray-900 flex items-center justify-center">
-        <div className="text-center">
-          <div className="animate-spin rounded-full h-32 w-32 border-b-2 border-blue-500 mx-auto mb-4"></div>
-          <h2 className="text-white text-xl">Creazione room in corso...</h2>
-        </div>
-      </div>
-    );
+    return <LoadingState />;
   }
 
   if (error) {
-    return (
-      <div className="min-h-screen bg-gray-900 flex items-center justify-center">
-        <div className="text-center max-w-md">
-          <div className="bg-red-600 rounded-full w-16 h-16 flex items-center justify-center mx-auto mb-6">
-            <span className="text-white text-2xl">⚠</span>
-          </div>
-          <h2 className="text-white text-2xl font-semibold mb-4">
-            Errore nella creazione della room
-          </h2>
-          <p className="text-gray-300 mb-6">{error}</p>
-          <div className="space-y-4">
-            <p className="text-sm text-gray-400">
-              Per utilizzare Interview Studio hai bisogno di una API key di
-              Daily.co:
-            </p>
-            <ol className="text-sm text-gray-400 text-left list-decimal list-inside space-y-2">
-              <li>
-                Registrati su{" "}
-                <a
-                  href="https://dashboard.daily.co/"
-                  className="text-blue-400 underline"
-                  target="_blank"
-                >
-                  dashboard.daily.co
-                </a>
-              </li>
-              <li>Vai nella sezione Developers</li>
-              <li>Copia la tua API key</li>
-              <li>Aggiungila al file .env.local come DAILY_API_KEY</li>
-            </ol>
-            <Link href="/">
-              <Button className="bg-blue-600 hover:bg-blue-700 mt-6">
-                <ArrowLeft className="h-4 w-4 mr-2" />
-                Torna alla Home
-              </Button>
-            </Link>
-          </div>
-        </div>
-      </div>
-    );
+    return <ErrorState error={error} />;
   }
 
   return (
     <div className="min-h-screen bg-gray-900 flex flex-col">
-      <div className="bg-gray-800 border-b border-gray-700 px-4 py-3">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center space-x-4">
-            <Link href="/">
-              <Button
-                variant="outline"
-                size="sm"
-                className="bg-gray-700 border-gray-600 hover:bg-gray-600"
-              >
-                <ArrowLeft className="h-4 w-4 mr-2" />
-                Home
-              </Button>
-            </Link>
-            <h1 className="text-white text-lg font-semibold">
-              Interview Studio - Room: {roomId.slice(0, 8)}...
-            </h1>
+      <RoomHeader
+        roomId={roomId}
+        permissions={permissions}
+        isRecording={isRecording}
+        recordingInstances={recordingInstances}
+        participantCount={participants.length + 1}
+        onCopyRoomUrl={copyRoomUrl}
+        onToggleRecording={toggleRecording}
+        onLeaveCall={handleLeave}
+      />
 
-            {/* Role indicator */}
-            <div className="flex items-center space-x-2">
-              {permissions.isHost ? (
-                <div className="flex items-center text-yellow-400">
-                  <Crown className="h-4 w-4 mr-1" />
-                  <span className="text-sm font-medium">Host</span>
-                </div>
-              ) : (
-                <div className="flex items-center text-blue-400">
-                  <Shield className="h-4 w-4 mr-1" />
-                  <span className="text-sm font-medium">Guest</span>
-                </div>
-              )}
-
-              {isRecording && (
-                <div className="flex items-center text-red-400 animate-pulse ml-4">
-                  <Circle className="h-4 w-4 mr-2 fill-current" />
-                  <span className="text-sm font-medium">
-                    {recordingInstances.length} registrazion
-                    {recordingInstances.length !== 1 ? "i" : "e"} separate
-                    attive
-                  </span>
-                </div>
-              )}
-
-            </div>
-          </div>
-
-          <div className="flex items-center space-x-2">
-            <Button
-              onClick={copyRoomUrl}
-              variant="outline"
-              size="sm"
-              className="bg-gray-700 border-gray-600 hover:bg-gray-600 text-white"
-            >
-              Condividi Room
-            </Button>
-            <div className="flex items-center text-gray-400">
-              <Users className="h-4 w-4 mr-1" />
-              <span className="text-sm">{participants.length + 1}</span>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div className="flex-1 relative overflow-hidden">
-        <div
-          id="daily-call-container"
-          className="w-full h-full absolute inset-0"
-          ref={(el) => {
-            if (el && callFrameRef.current && !el.hasChildNodes()) {
-              const iframe = callFrameRef.current.iframe();
-              if (iframe) {
-                // Assicuriamoci che l'iframe occupi tutto lo spazio disponibile
-                iframe.style.width = "100%";
-                iframe.style.height = "100%";
-                iframe.style.border = "none";
-                el.appendChild(iframe);
-              }
-            }
-          }}
-        />
-
-
-        <div className="absolute bottom-6 left-1/2 transform -translate-x-1/2">
-          <div className="flex items-center space-x-4 bg-gray-800/90 backdrop-blur rounded-full px-6 py-4">
-            <Button
-              onClick={toggleAudio}
-              size="lg"
-              className={`rounded-full w-14 h-14 ${
-                isAudioOn
-                  ? "bg-gray-700 hover:bg-gray-600"
-                  : "bg-red-600 hover:bg-red-700"
-              }`}
-            >
-              {isAudioOn ? (
-                <Mic className="h-6 w-6" />
-              ) : (
-                <MicOff className="h-6 w-6" />
-              )}
-            </Button>
-
-            <Button
-              onClick={toggleVideo}
-              size="lg"
-              className={`rounded-full w-14 h-14 ${
-                isVideoOn
-                  ? "bg-gray-700 hover:bg-gray-600"
-                  : "bg-red-600 hover:bg-red-700"
-              }`}
-            >
-              {isVideoOn ? (
-                <Video className="h-6 w-6" />
-              ) : (
-                <VideoOff className="h-6 w-6" />
-              )}
-            </Button>
-
-            {/* Recording button - only show for hosts */}
-            {permissions.canRecord ? (
-              <Button
-                onClick={toggleRecording}
-                size="lg"
-                className={`rounded-full w-14 h-14 ${
-                  isRecording
-                    ? "bg-red-600 hover:bg-red-700 animate-pulse"
-                    : "bg-gray-700 hover:bg-gray-600"
-                }`}
-                title={isRecording ? "Stop Recording" : "Start Recording with Timestamp Sync"}
-              >
-                {isRecording ? (
-                  <Square className="h-6 w-6 fill-current" />
-                ) : (
-                  <Circle className="h-6 w-6" />
-                )}
-              </Button>
-            ) : (
-              // Show disabled recording button with tooltip for guests
-              <Button
-                size="lg"
-                disabled
-                className="rounded-full w-14 h-14 bg-gray-800 cursor-not-allowed opacity-50"
-                title="Solo l'host può avviare le registrazioni"
-              >
-                <Circle className="h-6 w-6" />
-              </Button>
-            )}
-
-            <Button
-              onClick={leaveCall}
-              size="lg"
-              className="rounded-full w-14 h-14 bg-red-600 hover:bg-red-700"
-            >
-              <Phone className="h-6 w-6 transform rotate-[135deg]" />
-            </Button>
-          </div>
-        </div>
-      </div>
+      <CallContainer callFrame={callFrameRef.current} />
     </div>
   );
 }
