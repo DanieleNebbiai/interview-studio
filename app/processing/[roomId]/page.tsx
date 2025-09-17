@@ -326,7 +326,6 @@ export default function ProcessingPage() {
     }
   };
 
-
   const goHome = () => {
     router.push("/");
   };
@@ -340,10 +339,10 @@ export default function ProcessingPage() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 via-white to-purple-50">
+    <div className="min-h-screen">
       <div className="container mx-auto px-4 py-16">
         <div className="max-w-2xl mx-auto">
-          <div className="bg-white rounded-2xl shadow-lg p-8">
+          <div className="bg-accent rounded-2xl shadow-lg p-8">
             <ProcessingHeader roomId={roomId} />
 
             {error && <ProcessingError error={error} />}

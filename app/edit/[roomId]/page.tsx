@@ -95,14 +95,21 @@ export default function EditPage() {
     useEditSave();
 
   // Export system
-  const { exportStatus, isExporting, startExport, cancelExport, resetExport, downloadVideo, copyDownloadLink } =
-    useVideoExport();
+  const {
+    exportStatus,
+    isExporting,
+    startExport,
+    cancelExport,
+    resetExport,
+    downloadVideo,
+    copyDownloadLink,
+  } = useVideoExport();
   const [showExportModal, setShowExportModal] = useState(false);
   const [linkCopied, setLinkCopied] = useState(false);
 
   // Debug logging for export status
   useEffect(() => {
-    console.log('🔍 Export Status Debug:', {
+    console.log("🔍 Export Status Debug:", {
       stage: exportStatus.stage,
       stageCheck: exportStatus.stage === "completed",
       downloadUrl: exportStatus.downloadUrl,
@@ -110,8 +117,12 @@ export default function EditPage() {
       jobId: exportStatus.jobId,
       isExporting,
       showExportModal,
-      shouldShowDownload: exportStatus.stage === "completed" && exportStatus.downloadUrl,
-      fullCondition: exportStatus.stage === "completed" && exportStatus.downloadUrl && showExportModal
+      shouldShowDownload:
+        exportStatus.stage === "completed" && exportStatus.downloadUrl,
+      fullCondition:
+        exportStatus.stage === "completed" &&
+        exportStatus.downloadUrl &&
+        showExportModal,
     });
   }, [exportStatus, isExporting, showExportModal]);
 
@@ -488,60 +499,55 @@ export default function EditPage() {
 
   // Helper functions for extracted components
   const handleVideoTimeUpdate = (recordingId: string, videoTime: number) => {
-    const offset = syncOffsets[recordingId] || 0
+    const offset = syncOffsets[recordingId] || 0;
 
     if (!isFinite(videoTime) || !isFinite(offset)) {
       console.error(
         `Invalid values in onTimeUpdate for ${recordingId}: videoTime=${videoTime}, offset=${offset}`
-      )
-      return
+      );
+      return;
     }
 
-    const timelineTime = videoTime - offset
+    const timelineTime = videoTime - offset;
 
     if (isFinite(timelineTime) && timelineTime >= 0) {
-      setCurrentTime(timelineTime)
+      setCurrentTime(timelineTime);
     } else {
       console.error(
         `Invalid timeline time for ${recordingId}: ${timelineTime} (videoTime: ${videoTime}, offset: ${offset})`
-      )
-      return
+      );
+      return;
     }
 
     const currentSection = videoSections.find(
       (section) =>
-        timelineTime >= section.startTime &&
-        timelineTime < section.endTime
-    )
+        timelineTime >= section.startTime && timelineTime < section.endTime
+    );
 
     if (currentSection && !currentSection.isDeleted) {
       Object.values(videoRefs.current).forEach((video) => {
-        if (
-          video &&
-          video.playbackRate !== currentSection.playbackSpeed
-        ) {
-          video.playbackRate = currentSection.playbackSpeed
+        if (video && video.playbackRate !== currentSection.playbackSpeed) {
+          video.playbackRate = currentSection.playbackSpeed;
           console.log(
             `Applied playback speed ${
               currentSection.playbackSpeed
             }x to section ${currentSection.startTime.toFixed(
               1
             )}s-${currentSection.endTime.toFixed(1)}s`
-          )
+          );
         }
-      })
+      });
     }
 
     if (currentSection && currentSection.isDeleted && isPlaying) {
       const nextSection = videoSections
         .filter(
-          (section) =>
-            !section.isDeleted && section.startTime > timelineTime
+          (section) => !section.isDeleted && section.startTime > timelineTime
         )
-        .sort((a, b) => a.startTime - b.startTime)[0]
+        .sort((a, b) => a.startTime - b.startTime)[0];
 
       if (nextSection) {
-        const jumpTime = nextSection.startTime
+        const jumpTime = nextSection.startTime;
         if (isFinite(jumpTime) && jumpTime >= 0) {
           console.log(
             `Skipping deleted section ${currentSection.startTime.toFixed(
@@ -549,34 +555,35 @@ export default function EditPage() {
             )}s-${currentSection.endTime.toFixed(
               1
             )}s, jumping to ${jumpTime.toFixed(1)}s`
-          )
-          syncAllVideosToTime(jumpTime)
+          );
+          syncAllVideosToTime(jumpTime);
         } else {
-          console.error(`Invalid jump time: ${jumpTime}`)
+          console.error(`Invalid jump time: ${jumpTime}`);
         }
       } else {
-        console.log(
-          "Reached end of non-deleted sections, pausing video"
-        )
-        setIsPlaying(false)
-        Object.values(videoRefs.current).forEach((v) => v?.pause())
+        console.log("Reached end of non-deleted sections, pausing video");
+        setIsPlaying(false);
+        Object.values(videoRefs.current).forEach((v) => v?.pause());
       }
     }
-  }
+  };
 
-  const handleSectionContextMenu = (event: React.MouseEvent, sectionId: string) => {
-    const windowHeight = window.innerHeight
-    const clickY = event.clientY
-    const estimatedMenuHeight = 400
-    const shouldOpenUpward = clickY + estimatedMenuHeight > windowHeight
+  const handleSectionContextMenu = (
+    event: React.MouseEvent,
+    sectionId: string
+  ) => {
+    const windowHeight = window.innerHeight;
+    const clickY = event.clientY;
+    const estimatedMenuHeight = 400;
+    const shouldOpenUpward = clickY + estimatedMenuHeight > windowHeight;
 
     setContextMenu({
       x: event.clientX,
       y: event.clientY,
       sectionId,
       openUpward: shouldOpenUpward,
-    })
-  }
+    });
+  };
 
   // Sync all videos to a specific time, applying cut offsets (videos start from their offset point)
   const syncAllVideosToTime = useCallback(
@@ -1156,7 +1163,6 @@ export default function EditPage() {
     });
   };
 
-
   if (loading) {
     return <LoadingState />;
   }
@@ -1166,7 +1172,7 @@ export default function EditPage() {
   }
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-gray-50 via-white to-blue-50">
+    <div className="min-h-screen bg-background">
       <div className="container mx-auto px-4 py-6">
         <EditHeader
           roomName={editData.roomName}
@@ -1195,12 +1201,14 @@ export default function EditPage() {
             onToggleMute={toggleMute}
             onVideoError={handleVideoError}
             onRetryVideo={retryVideo}
-            onVideosLoaded={(recordingId) => setVideosLoaded(prev => new Set(prev).add(recordingId))}
+            onVideosLoaded={(recordingId) =>
+              setVideosLoaded((prev) => new Set(prev).add(recordingId))
+            }
             onTimeUpdate={handleVideoTimeUpdate}
             currentCaptions={currentCaptions}
           />
           {/* Timeline Section */}
-          <div className="bg-white rounded-lg shadow-lg p-4 space-y-6">
+          <div className="bg-muted rounded-lg shadow-lg p-4 space-y-6">
             <div className="flex items-center justify-between">
               <PlaybackControls
                 isPlaying={isPlaying}

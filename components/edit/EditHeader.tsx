@@ -48,7 +48,7 @@ export function EditHeader({
           </div>
         )}
 
-        <Button onClick={onExport} variant="secondary" disabled={isExporting}>
+        <Button onClick={onExport} variant="default" disabled={isExporting}>
           <Download className="h-4 w-4 mr-2" />
           {isExporting ? "Esportando..." : "Esporta Video"}
         </Button>

@@ -1,18 +1,18 @@
-'use client'
+"use client";
 
-import { Button } from "@/components/ui/button"
-import { Home, CheckCircle } from "lucide-react"
+import { Button } from "@/components/ui/button";
+import { Home, CheckCircle } from "lucide-react";
 
 interface ProcessingActionsProps {
-  isCompleted: boolean
-  onGoHome: () => void
-  onGoToEditor: () => void
+  isCompleted: boolean;
+  onGoHome: () => void;
+  onGoToEditor: () => void;
 }
 
 export function ProcessingActions({
   isCompleted,
   onGoHome,
-  onGoToEditor
+  onGoToEditor,
 }: ProcessingActionsProps) {
   return (
     <div className="flex space-x-4">
@@ -22,14 +22,11 @@ export function ProcessingActions({
       </Button>
 
       {isCompleted && (
-        <Button
-          onClick={onGoToEditor}
-          className="flex-1"
-        >
+        <Button onClick={onGoToEditor} className="flex-1">
           <CheckCircle className="h-4 w-4 mr-2" />
           Vai all&apos;Editor
         </Button>
       )}
     </div>
-  )
+  );
 }

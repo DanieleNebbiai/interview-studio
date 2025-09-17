@@ -127,24 +127,24 @@ export default function RoomPage() {
             border: "none",
             borderRadius: "12px",
           },
-          // Abilita i controlli nativi Daily Prebuilt ma non il leave button
-          showLeaveButton: false, // Disabilitiamo il leave button di Daily
+
+          showLeaveButton: false,
           showFullscreenButton: true,
           showLocalVideo: true,
           showParticipantsBar: true,
           showUserNameChangeUI: true,
           theme: {
             colors: {
-              accent: "#2563eb",
+              accent: "#ff7a00",
               accentText: "#ffffff",
-              background: "#ffffff",
-              backgroundAccent: "#f8fafc",
-              baseText: "#1e293b",
-              border: "#e2e8f0",
-              mainAreaBg: "#000000",
-              mainAreaBgAccent: "#1e293b",
+              background: "#1c1e21",
+              backgroundAccent: "#2a2d31",
+              baseText: "#ffffff",
+              border: "#1c1e21",
+              mainAreaBg: "#1c1e21",
+              mainAreaBgAccent: "#2a2d31",
               mainAreaText: "#ffffff",
-              supportiveText: "#64748b",
+              supportiveText: "#b5b5b5",
             },
           },
           activeSpeakerMode: true,
@@ -524,7 +524,7 @@ export default function RoomPage() {
   }
 
   return (
-    <div className="min-h-screen bg-gray-900 flex flex-col">
+    <div className="min-h-screen bg-background flex flex-col">
       <RoomHeader
         roomId={roomId}
         permissions={permissions}
