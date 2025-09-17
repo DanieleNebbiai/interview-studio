@@ -832,11 +832,12 @@ async function processChunkMemorySafe(params: {
     } else {
       // Single video processing (memory-efficient)
       console.log(`📱 Single video chunk: ${chunkDuration.toFixed(1)}s (speed will be applied during concatenation)`)
-      console.log(`🔧 Using trim with duration: start=${chunk.startTime.toFixed(2)}s, duration=${chunkDuration.toFixed(2)}s`)
+      const endTime = chunk.startTime + chunkDuration;
+      console.log(`🔧 Using trim with start+end: start=${chunk.startTime.toFixed(2)}s, end=${endTime.toFixed(2)}s (duration=${chunkDuration.toFixed(2)}s)`)
 
       filterComplex.push(
-        `[0:v]trim=start=${chunk.startTime.toFixed(2)}:duration=${chunkDuration.toFixed(2)},scale=1280:720,setsar=1/1[finalvideo]`,
-        `[0:a]atrim=start=${chunk.startTime.toFixed(2)}:duration=${chunkDuration.toFixed(2)}[finalaudio]`
+        `[0:v]trim=start=${chunk.startTime.toFixed(2)}:end=${endTime.toFixed(2)},setpts=PTS-STARTPTS,scale=1280:720,setsar=1/1[finalvideo]`,
+        `[0:a]atrim=start=${chunk.startTime.toFixed(2)}:end=${endTime.toFixed(2)},asetpts=PTS-STARTPTS[finalaudio]`
       )
     }
 
