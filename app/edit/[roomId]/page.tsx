@@ -14,7 +14,7 @@ import { Timeline } from "@/components/edit/Timeline";
 import { ExportModal } from "@/components/edit/ExportModal";
 import { ContextMenu } from "@/components/edit/ContextMenu";
 import { SplitContextMenu } from "@/components/edit/SplitContextMenu";
-import { TranscriptionSidebar } from "@/components/edit/TranscriptionSidebar";
+import { RightSidebar } from "@/components/edit/RightSidebar";
 
 interface Recording {
   id: string;
@@ -23,6 +23,17 @@ interface Recording {
   file_size: number;
   recording_started_at?: string; // ISO timestamp for synchronization
   created_at?: string; // Fallback timestamp if recording_started_at is not available
+  waveforms?: Array<{
+    id: string;
+    waveform_data: {
+      points: Array<{ time: number; amplitude: number }>;
+      sampleRate: number;
+      duration: number;
+    };
+    sample_rate: number;
+    duration: number;
+    points_count: number;
+  }>;
 }
 
 interface Transcription {
@@ -75,6 +86,10 @@ export default function EditPage() {
   const [syncOffsets, setSyncOffsets] = useState<{
     [recordingId: string]: number;
   }>({});
+
+  // Caption settings
+  const [captionsEnabled, setCaptionsEnabled] = useState(true);
+  const [captionSize, setCaptionSize] = useState<"small" | "medium" | "large">("medium");
 
   // Video loading tracking for accurate duration calculation
   const [videosLoaded, setVideosLoaded] = useState<Set<string>>(new Set());
@@ -756,7 +771,7 @@ export default function EditPage() {
     return activeWords.sort((a, b) => a.start - b.start);
   }, [editData, currentTime]);
 
-  const currentCaptions = getCurrentCaptions();
+  // const currentCaptions = getCurrentCaptions(); // Legacy - not used anymore
 
   // Legacy functions (to be removed)
   // TODO: Remove these functions after migration complete
@@ -1172,84 +1187,97 @@ export default function EditPage() {
   }
 
   return (
-    <div className="min-h-screen bg-background">
-      <div className="container mx-auto px-4 py-6">
-        <EditHeader
-          roomName={editData.roomName}
-          syncOffsets={syncOffsets}
-          recordings={editData.recordings}
-          isExporting={isExporting}
-          onExport={() => setShowExportModal(true)}
-          onRefresh={fetchEditData}
-          loading={loading}
-        />
+    <div className="min-h-screen bg-background flex flex-col">
+      {/* Top Navbar */}
+      <EditHeader
+        roomName={editData.roomName}
+        syncOffsets={syncOffsets}
+        recordings={editData.recordings}
+        isExporting={isExporting}
+        onExport={() => setShowExportModal(true)}
+        onRefresh={fetchEditData}
+        loading={loading}
+      />
 
-        <div className="pr-96">
-          {" "}
-          {/* Add right margin for fixed sidebar */}
-          <VideoPlayer
-            recordings={editData.recordings}
-            currentTime={currentTime}
-            mutedVideos={mutedVideos}
-            videoRefs={videoRefs}
-            focusedVideo={focusedVideo}
-            videoErrors={videoErrors}
-            syncOffsets={syncOffsets}
-            videoSections={videoSections}
-            videosLoaded={videosLoaded}
-            isPlaying={isPlaying}
-            onToggleMute={toggleMute}
-            onVideoError={handleVideoError}
-            onRetryVideo={retryVideo}
-            onVideosLoaded={(recordingId) =>
-              setVideosLoaded((prev) => new Set(prev).add(recordingId))
-            }
-            onTimeUpdate={handleVideoTimeUpdate}
-            currentCaptions={currentCaptions}
-          />
-          {/* Timeline Section */}
-          <div className="bg-muted rounded-lg shadow-lg p-4 space-y-6">
-            <div className="flex items-center justify-between">
-              <PlaybackControls
-                isPlaying={isPlaying}
-                currentTime={currentTime}
-                duration={duration}
-                onTogglePlay={togglePlay}
-              />
-
-              <SplitControls
-                isSplitMode={isSplitMode}
-                splitPoints={splitPoints}
-                videoSections={videoSections}
-                isSaving={isSaving}
-                lastSaved={lastSaved}
-                saveError={saveError}
-                onToggleSplitMode={toggleSplitMode}
-                onResetSplits={resetSplits}
-              />
-            </div>
-
-            <Timeline
-              duration={duration}
-              currentTime={currentTime}
-              videoSections={videoSections}
-              splitPoints={splitPoints}
-              isSplitMode={isSplitMode}
-              isDraggingSplit={isDraggingSplit}
-              draggingSplitIndex={draggingSplitIndex}
+      {/* Main Content Area */}
+      <div className="flex-1 flex">
+        {/* Video Area */}
+        <div className="flex-1 flex flex-col">
+          <div className="flex-1 p-6">
+            <VideoPlayer
               recordings={editData.recordings}
-              onTimelineClick={handleTimelineClick}
-              onSplitMouseMove={handleSplitMouseMove}
-              onSplitMouseUp={handleSplitMouseUp}
-              onSectionContextMenu={handleSectionContextMenu}
-              onSplitMouseDown={handleSplitMouseDown}
-              onSplitContextMenu={handleSplitContextMenu}
+              currentTime={currentTime}
+              mutedVideos={mutedVideos}
+              videoRefs={videoRefs}
+              focusedVideo={focusedVideo}
+              videoErrors={videoErrors}
+              syncOffsets={syncOffsets}
+              videoSections={videoSections}
+              transcriptions={editData.transcriptions}
+              captionsEnabled={captionsEnabled}
+              captionSize={captionSize}
+              onToggleMute={toggleMute}
+              onVideoError={handleVideoError}
+              onRetryVideo={retryVideo}
+              onVideosLoaded={(recordingId) =>
+                setVideosLoaded((prev) => new Set(prev).add(recordingId))
+              }
+              onTimeUpdate={handleVideoTimeUpdate}
             />
           </div>
         </div>
+
+        {/* Right Sidebar */}
+        <RightSidebar
+          transcriptions={editData.transcriptions}
+          captionsEnabled={captionsEnabled}
+          captionSize={captionSize}
+          onCaptionsEnabledChange={setCaptionsEnabled}
+          onCaptionSizeChange={setCaptionSize}
+        />
       </div>
 
-      <TranscriptionSidebar transcriptions={editData.transcriptions} />
+      {/* Bottom Timeline */}
+      <div className="bg-card border-t border-border p-4">
+        <div className="space-y-4">
+          <div className="flex items-center justify-between">
+            <PlaybackControls
+              isPlaying={isPlaying}
+              currentTime={currentTime}
+              duration={duration}
+              onTogglePlay={togglePlay}
+            />
+
+            <SplitControls
+              isSplitMode={isSplitMode}
+              splitPoints={splitPoints}
+              videoSections={videoSections}
+              isSaving={isSaving}
+              lastSaved={lastSaved}
+              saveError={saveError}
+              onToggleSplitMode={toggleSplitMode}
+              onResetSplits={resetSplits}
+            />
+          </div>
+
+          <Timeline
+            duration={duration}
+            currentTime={currentTime}
+            videoSections={videoSections}
+            splitPoints={splitPoints}
+            isSplitMode={isSplitMode}
+            isDraggingSplit={isDraggingSplit}
+            draggingSplitIndex={draggingSplitIndex}
+            recordings={editData.recordings}
+            onTimelineClick={handleTimelineClick}
+            onSplitMouseMove={handleSplitMouseMove}
+            onSplitMouseUp={handleSplitMouseUp}
+            onSectionContextMenu={handleSectionContextMenu}
+            onSplitMouseDown={handleSplitMouseDown}
+            onSplitContextMenu={handleSplitContextMenu}
+          />
+        </div>
+      </div>
 
       <ContextMenu
         contextMenu={contextMenu}

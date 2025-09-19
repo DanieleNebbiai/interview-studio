@@ -2,10 +2,18 @@
 
 import { Button } from "@/components/ui/button"
 
+interface VideoSection {
+  id: string;
+  startTime: number;
+  endTime: number;
+  isDeleted: boolean;
+  playbackSpeed: number;
+}
+
 interface SplitControlsProps {
   isSplitMode: boolean
   splitPoints: number[]
-  videoSections: any[]
+  videoSections: VideoSection[]
   isSaving: boolean
   lastSaved: Date | null
   saveError: string | null

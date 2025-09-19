@@ -51,6 +51,11 @@ export default function ProcessingPage() {
       status: "pending",
     },
     {
+      id: "waveform",
+      name: "Estrazione dati waveform audio",
+      status: "pending",
+    },
+    {
       id: "ai-edit",
       name: "Analisi AI per editing automatico",
       status: "pending",
@@ -271,7 +276,35 @@ export default function ProcessingPage() {
       );
       setCurrentStep(2);
 
-      // Step 3: AI Editing Analysis (TEMPORARILY DISABLED)
+      // Step 3: Waveform Processing
+      updateStep(
+        "waveform",
+        "processing",
+        `Estrazione waveform da ${transcribeData.recordings.length} file audio...`
+      );
+
+      const waveformResponse = await fetch("/api/recordings/waveform", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          roomId: data.roomId,
+          recordings: transcribeData.recordings,
+        }),
+      });
+
+      if (!waveformResponse.ok) {
+        throw new Error("Errore durante l'estrazione waveform");
+      }
+
+      const waveformData = await waveformResponse.json();
+      updateStep(
+        "waveform",
+        "completed",
+        `Waveform estratto per ${waveformData.processedCount} registrazioni`
+      );
+      setCurrentStep(3);
+
+      // Step 4: AI Editing Analysis (TEMPORARILY DISABLED)
       console.log("AI editing step skipped - temporarily disabled");
       updateStep(
         "ai-edit",
@@ -279,9 +312,9 @@ export default function ProcessingPage() {
         "AI editing disabilitato temporaneamente - focus segments gestiti manualmente"
       );
 
-      setCurrentStep(3);
+      setCurrentStep(4);
 
-      // Step 4: Save to Supabase
+      // Step 5: Save to Supabase
       updateStep("save", "processing", "Salvataggio dati...");
 
       const saveResponse = await fetch("/api/recordings/save", {
@@ -291,6 +324,7 @@ export default function ProcessingPage() {
           roomId: data.roomId,
           recordings: transcribeData.recordings, // Now includes start_ts from Daily.co
           transcriptions: transcribeData.transcriptions,
+          waveforms: waveformData.waveforms,
           // aiEditingResult: transcribeData.aiEditingResult, // DISABLED - AI-generated focus segments
         }),
       });
@@ -300,9 +334,9 @@ export default function ProcessingPage() {
       }
 
       updateStep("save", "completed", "Dati salvati su database");
-      setCurrentStep(4);
+      setCurrentStep(5);
 
-      // Step 5: Complete
+      // Step 6: Complete
       updateStep(
         "complete",
         "completed",

@@ -1,13 +1,22 @@
 "use client";
 
 import { Button } from "@/components/ui/button";
-import { ArrowLeft, Download } from "lucide-react";
-import { useRouter } from "next/navigation";
+import { Download } from "lucide-react";
+import Link from "next/link";
+import Image from "next/image";
+import { motion } from "motion/react";
+
+interface Recording {
+  id: string;
+  recording_url: string;
+  duration: number;
+  file_size: number;
+}
 
 interface EditHeaderProps {
   roomName: string;
   syncOffsets: { [key: string]: number };
-  recordings: any[];
+  recordings: Recording[];
   isExporting: boolean;
   onExport: () => void;
   onRefresh: () => void;
@@ -16,41 +25,53 @@ interface EditHeaderProps {
 
 export function EditHeader({
   roomName,
-  syncOffsets,
   recordings,
   isExporting,
   onExport,
-  onRefresh,
-  loading,
 }: EditHeaderProps) {
-  const router = useRouter();
-
   return (
-    <div className="flex items-center justify-between mb-6">
-      <div className="flex items-center space-x-4">
-        <Button onClick={() => router.push("/recordings")} variant="outline">
-          <ArrowLeft className="h-4 w-4 mr-2" />
-          Indietro
-        </Button>
-        <div>
-          <h1 className="text-2xl font-bold text-gray-900">Editor Video</h1>
-          <p className="text-gray-600">Room: {roomName}</p>
-        </div>
-      </div>
-      <div className="flex items-center space-x-2">
-        {Object.keys(syncOffsets).length > 0 && (
-          <div className="text-sm text-green-600 bg-green-50 px-3 py-1 rounded-full">
-            ✂️ Video tagliati automaticamente ({Object.keys(syncOffsets).length}{" "}
-            offset applicati)
-            {recordings?.some((r) => r.recording_started_at)
-              ? ""
-              : " - usando created_at"}
-          </div>
-        )}
+    <div className="bg-card border-b border-border px-6 py-4">
+      <div className="flex items-center justify-between">
+        {/* Left: Logo + Home Link */}
+        <Link href="/" className="flex items-center hover:opacity-80 transition-opacity">
+          <motion.div
+            className="w-8 h-8 mr-3"
+            animate={{ rotate: 360 }}
+            transition={{
+              duration: 8,
+              repeat: Infinity,
+              ease: "linear"
+            }}
+          >
+            <Image
+              src="/logo.png"
+              alt="Interview Studio Logo"
+              width={32}
+              height={32}
+              className="w-full h-full object-contain"
+            />
+          </motion.div>
+          <span className="text-xl font-bold text-foreground">
+            Interview Studio
+          </span>
+        </Link>
 
-        <Button onClick={onExport} variant="default" disabled={isExporting}>
+        {/* Center: Project Title */}
+        <div className="flex-1 text-center">
+          <h1 className="text-lg font-semibold text-foreground">
+            {roomName}
+          </h1>
+        </div>
+
+        {/* Right: Export Button */}
+        <Button
+          onClick={onExport}
+          disabled={isExporting || recordings.length === 0}
+          size="sm"
+          variant="default"
+        >
           <Download className="h-4 w-4 mr-2" />
-          {isExporting ? "Esportando..." : "Esporta Video"}
+          {isExporting ? "Exporting..." : "Export"}
         </Button>
       </div>
     </div>

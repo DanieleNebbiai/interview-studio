@@ -1,8 +1,9 @@
 'use client'
 
-import { useState, useRef, useCallback } from "react"
+import React from "react"
 import { Button } from "@/components/ui/button"
 import { Volume2, VolumeX } from "lucide-react"
+import { CaptionOverlay } from "./CaptionOverlay"
 
 interface Recording {
   id: string
@@ -22,6 +23,20 @@ interface VideoSection {
   focusedParticipantId?: string
 }
 
+interface Transcription {
+  id: string;
+  transcript_text: string;
+  word_timestamps: {
+    words: Array<{
+      word: string;
+      start: number;
+      end: number;
+    }>;
+    wordCount: number;
+    totalDuration: number;
+  };
+}
+
 interface VideoPlayerProps {
   recordings: Recording[]
   currentTime: number
@@ -31,20 +46,14 @@ interface VideoPlayerProps {
   videoErrors: Set<string>
   syncOffsets: { [key: string]: number }
   videoSections: VideoSection[]
-  videosLoaded: Set<string>
-  isPlaying: boolean
+  transcriptions: Transcription[]
+  captionsEnabled: boolean
+  captionSize: "small" | "medium" | "large"
   onToggleMute: (recordingId: string) => void
   onVideoError: (recordingId: string) => void
   onRetryVideo: (recordingId: string) => void
   onVideosLoaded: (recordingId: string) => void
   onTimeUpdate: (recordingId: string, videoTime: number) => void
-  currentCaptions?: Array<{
-    word: string
-    start: number
-    end: number
-    isActive: boolean
-    participantIndex: number
-  }> | null
 }
 
 export function VideoPlayer({
@@ -56,14 +65,14 @@ export function VideoPlayer({
   videoErrors,
   syncOffsets,
   videoSections,
-  videosLoaded,
-  isPlaying,
+  transcriptions,
+  captionsEnabled,
+  captionSize,
   onToggleMute,
   onVideoError,
   onRetryVideo,
   onVideosLoaded,
-  onTimeUpdate,
-  currentCaptions
+  onTimeUpdate
 }: VideoPlayerProps) {
   const getVideoGridClass = (count: number) => {
     if (count === 1) return "grid-cols-1"
@@ -215,43 +224,13 @@ export function VideoPlayer({
         </div>
       </div>
 
-      {currentCaptions && currentCaptions.length > 0 && (
-        <div className="absolute top-4 left-4 right-4 bottom-4 flex items-end justify-center pointer-events-none">
-          <div className="bg-black bg-opacity-75 rounded-lg p-4 max-w-[600px]">
-            <div className="flex flex-wrap gap-1 text-white text-lg font-medium leading-relaxed">
-              {currentCaptions.map((caption, index) => (
-                <span
-                  key={`${caption.start}-${index}`}
-                  className={`transition-all duration-300 px-1 rounded ${
-                    caption.isActive
-                      ? "bg-yellow-400 text-black font-bold scale-110"
-                      : caption.participantIndex === 1
-                      ? "text-blue-300"
-                      : "text-green-300"
-                  }`}
-                  style={{
-                    transitionDelay: caption.isActive ? "0ms" : "100ms",
-                  }}
-                >
-                  {caption.word}
-                </span>
-              ))}
-            </div>
-
-            <div className="text-xs text-gray-300 mt-2">
-              {currentCaptions.some((c) => c.isActive) && (
-                <>
-                  Partecipante{" "}
-                  {
-                    currentCaptions.find((c) => c.isActive)
-                      ?.participantIndex
-                  }
-                </>
-              )}
-            </div>
-          </div>
-        </div>
-      )}
+      {/* New Caption Overlay with phrase grouping */}
+      <CaptionOverlay
+        transcriptions={transcriptions}
+        currentTime={currentTime}
+        isEnabled={captionsEnabled}
+        size={captionSize}
+      />
     </div>
   )
 }

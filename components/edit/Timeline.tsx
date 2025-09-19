@@ -1,38 +1,56 @@
-'use client'
+"use client";
 
 interface VideoSection {
-  id: string
-  startTime: number
-  endTime: number
-  isDeleted: boolean
-  playbackSpeed: number
-  focusedParticipantId?: string
+  id: string;
+  startTime: number;
+  endTime: number;
+  isDeleted: boolean;
+  playbackSpeed: number;
+  focusedParticipantId?: string;
+}
+
+interface WaveformPoint {
+  time: number;
+  amplitude: number;
+}
+
+interface Waveform {
+  id: string;
+  waveform_data: {
+    points: WaveformPoint[];
+    sampleRate: number;
+    duration: number;
+  };
+  sample_rate: number;
+  duration: number;
+  points_count: number;
 }
 
 interface Recording {
-  id: string
-  recording_url: string
-  duration: number
-  file_size: number
-  recording_started_at?: string
-  created_at?: string
+  id: string;
+  recording_url: string;
+  duration: number;
+  file_size: number;
+  recording_started_at?: string;
+  created_at?: string;
+  waveforms?: Waveform[];
 }
 
 interface TimelineProps {
-  duration: number
-  currentTime: number
-  videoSections: VideoSection[]
-  splitPoints: number[]
-  isSplitMode: boolean
-  isDraggingSplit: boolean
-  draggingSplitIndex: number | null
-  recordings: Recording[]
-  onTimelineClick: (event: React.MouseEvent<HTMLDivElement>) => void
-  onSplitMouseMove: (event: React.MouseEvent<HTMLDivElement>) => void
-  onSplitMouseUp: () => void
-  onSectionContextMenu: (event: React.MouseEvent, sectionId: string) => void
-  onSplitMouseDown: (event: React.MouseEvent, splitIndex: number) => void
-  onSplitContextMenu: (event: React.MouseEvent, splitIndex: number) => void
+  duration: number;
+  currentTime: number;
+  videoSections: VideoSection[];
+  splitPoints: number[];
+  isSplitMode: boolean;
+  isDraggingSplit: boolean;
+  draggingSplitIndex: number | null;
+  recordings: Recording[];
+  onTimelineClick: (event: React.MouseEvent<HTMLDivElement>) => void;
+  onSplitMouseMove: (event: React.MouseEvent<HTMLDivElement>) => void;
+  onSplitMouseUp: () => void;
+  onSectionContextMenu: (event: React.MouseEvent, sectionId: string) => void;
+  onSplitMouseDown: (event: React.MouseEvent, splitIndex: number) => void;
+  onSplitContextMenu: (event: React.MouseEvent, splitIndex: number) => void;
 }
 
 export function Timeline({
@@ -49,179 +67,249 @@ export function Timeline({
   onSplitMouseUp,
   onSectionContextMenu,
   onSplitMouseDown,
-  onSplitContextMenu
+  onSplitContextMenu,
 }: TimelineProps) {
+  // Generate timestamp markers (every 30 seconds + start/end)
+  const generateTimestamps = () => {
+    const timestamps = [0]; // Start
+    const interval = 30; // 30 seconds
+
+    for (let time = interval; time < duration; time += interval) {
+      timestamps.push(time);
+    }
+
+    if (duration > 0 && timestamps[timestamps.length - 1] !== duration) {
+      timestamps.push(duration); // End
+    }
+
+    return timestamps;
+  };
+
+  const formatTime = (seconds: number) => {
+    const minutes = Math.floor(seconds / 60);
+    const secs = Math.floor(seconds % 60);
+    return `${minutes}:${secs.toString().padStart(2, "0")}`;
+  };
+
+  const timestamps = generateTimestamps();
+
   return (
-    <div className="space-y-2">
-      <div className="flex items-center justify-between">
-        <span className="text-xs text-gray-400">
-          {isSplitMode ? "Timeline - Click per fare split" : "Timeline"}
-        </span>
-        <div className="text-xs text-gray-500 flex items-center gap-4">
-          <span>
-            Durata finale:{" "}
-            {(
-              videoSections
-                .filter((s) => !s.isDeleted)
-                .reduce(
-                  (acc, s) => acc + (s.endTime - s.startTime),
-                  0
-                ) / 60
-            ).toFixed(1)}{" "}
-            min
-          </span>
-          <div className="flex items-center gap-2">
-            <div className="flex items-center gap-1">
-              <div className="w-3 h-3 bg-green-200 rounded-sm"></div>
-              <span>1x</span>
-            </div>
-            <div className="flex items-center gap-1">
-              <div className="w-3 h-3 bg-orange-200 rounded-sm"></div>
-              <span>&lt;1x</span>
-            </div>
-            <div className="flex items-center gap-1">
-              <div className="w-3 h-3 bg-blue-200 rounded-sm"></div>
-              <span>&gt;1x</span>
-            </div>
-            <div className="flex items-center gap-1">
-              <div className="w-3 h-3 bg-purple-300 rounded-sm"></div>
-              <span>🎯 Focus</span>
-            </div>
+    <div className="space-y-4">
+      {/* Timestamp markers */}
+      <div className="relative h-6">
+        {timestamps.map((time, index) => (
+          <div
+            key={index}
+            className="absolute text-xs text-muted-foreground"
+            style={{
+              left: `${(time / duration) * 100}%`,
+              transform: "translateX(-50%)",
+            }}
+          >
+            {formatTime(time)}
           </div>
-        </div>
+        ))}
       </div>
+
+      {/* Timeline container */}
       <div
-        className={`w-full h-8 rounded-full cursor-pointer relative ${
-          isSplitMode ? "bg-orange-100" : "bg-gray-200"
-        }`}
+        className="relative w-full h-16 cursor-pointer"
         onClick={onTimelineClick}
         onMouseMove={onSplitMouseMove}
         onMouseUp={onSplitMouseUp}
         onMouseLeave={onSplitMouseUp}
       >
-        {videoSections.map((section) => (
-          <div
-            key={section.id}
-            className={`absolute top-0 h-full ${
-              section.isDeleted
-                ? "bg-red-200 opacity-50"
-                : section.focusedParticipantId
-                ? "bg-purple-300"
-                : section.playbackSpeed !== 1.0
-                ? section.playbackSpeed < 1.0
-                  ? "bg-orange-200"
-                  : "bg-blue-200"
-                : "bg-green-200"
-            } border-l border-r border-gray-400`}
-            style={{
-              left: `${(section.startTime / duration) * 100}%`,
-              width: `${
-                ((section.endTime - section.startTime) / duration) * 100
-              }%`,
-            }}
-            title={`Section ${section.startTime.toFixed(
-              1
-            )}s - ${section.endTime.toFixed(1)}s${
-              section.isDeleted
-                ? " (DELETED)"
-                : ` - Velocità: ${section.playbackSpeed}x${
-                    section.focusedParticipantId
-                      ? ` - Focus: Partecipante ${
-                          recordings.findIndex(
-                            (r) => r.id === section.focusedParticipantId
-                          ) + 1 || "?"
-                        }`
-                      : " - Focus: 50/50"
-                  }`
-            }`}
-            onContextMenu={(e) => {
-              e.preventDefault()
+        {/* Timeline segments */}
+        {videoSections
+          .filter((section) => !section.isDeleted)
+          .map((section) => {
+            const segmentDuration = section.endTime - section.startTime;
+            const focusedParticipant = section.focusedParticipantId
+              ? recordings.findIndex(
+                  (r) => r.id === section.focusedParticipantId
+                ) + 1
+              : null;
 
-              const windowHeight = window.innerHeight
-              const clickY = e.clientY
-              const estimatedMenuHeight = 400
-              const shouldOpenUpward =
-                clickY + estimatedMenuHeight > windowHeight
+            // Generate waveform from real audio data or fallback to simulation
+            const generateWaveform = () => {
+              // Find the focused recording's waveform data
+              const focusedRecording = section.focusedParticipantId
+                ? recordings.find((r) => r.id === section.focusedParticipantId)
+                : recordings[0]; // Default to first recording if no focus
 
-              onSectionContextMenu(e, section.id)
-            }}
-          >
-            {section.isDeleted ? (
-              <div className="absolute inset-0 flex items-center justify-center text-xs text-red-600 font-bold">
-                DELETED
+              if (focusedRecording?.waveforms?.[0]?.waveform_data?.points) {
+                // Use real waveform data
+                const waveformData =
+                  focusedRecording.waveforms[0].waveform_data;
+                const points = [];
+
+                // Calculate which part of the waveform corresponds to this section
+                const sectionStartRatio = section.startTime / duration;
+                const sectionEndRatio = section.endTime / duration;
+
+                // Filter points within the section time range
+                const sectionPoints = waveformData.points.filter((point) => {
+                  const pointRatio = point.time / waveformData.duration;
+                  return (
+                    pointRatio >= sectionStartRatio &&
+                    pointRatio <= sectionEndRatio
+                  );
+                });
+
+                // Convert to SVG format
+                for (let i = 0; i < sectionPoints.length; i++) {
+                  const point = sectionPoints[i];
+                  const x = (i / (sectionPoints.length - 1 || 1)) * 100;
+                  const height = point.amplitude * 20; // Scale amplitude to visible height
+                  points.push(
+                    `${x},${50 - height / 2} ${x},${50 + height / 2}`
+                  );
+                }
+
+                return points.length > 0 ? points : generateFallbackWaveform();
+              } else {
+                // Fallback to simulated waveform
+                return generateFallbackWaveform();
+              }
+            };
+
+            const generateFallbackWaveform = () => {
+              const points = [];
+              const numPoints = Math.max(20, Math.floor(segmentDuration * 2));
+
+              for (let i = 0; i < numPoints; i++) {
+                const x = (i / (numPoints - 1)) * 100;
+
+                // Create speech pattern with pauses (more realistic)
+                const speechCycle = Math.sin(i * 0.15) * 0.5 + 0.5; // Slow wave for speech/pause pattern
+                const isSpeaking = speechCycle > 0.3; // 70% speaking, 30% pause
+
+                if (isSpeaking) {
+                  // Varying speech intensity
+                  const intensity = Math.sin(i * 0.8) * 0.3 + 0.7;
+                  const variation =
+                    Math.sin(i * 2.1) * 0.4 + Math.cos(i * 1.7) * 0.3;
+                  const height = (15 + variation * 10) * intensity;
+                  points.push(
+                    `${x},${50 - height / 2} ${x},${50 + height / 2}`
+                  );
+                } else {
+                  // Silent periods - very low amplitude
+                  const silentNoise = Math.random() * 2 + 1; // Background noise
+                  points.push(
+                    `${x},${50 - silentNoise / 2} ${x},${50 + silentNoise / 2}`
+                  );
+                }
+              }
+              return points;
+            };
+
+            const waveformPoints = generateWaveform();
+
+            return (
+              <div
+                key={section.id}
+                className="absolute top-0 h-full 
+                bg-orange-400 rounded-xl border 
+               border-amber-100/20 overflow-hidden
+                shadow-[inset_0_16px_16px_rgba(0,0,0,0.2)] "
+                style={{
+                  left: `${(section.startTime / duration) * 100}%`,
+                  width: `${
+                    ((section.endTime - section.startTime) / duration) * 100
+                  }%`,
+                  minWidth: "80px", // Minimum width to show content
+                }}
+                onContextMenu={(e) => {
+                  e.preventDefault();
+                  onSectionContextMenu(e, section.id);
+                }}
+              >
+                {/* Audio waveform background */}
+                <svg
+                  className="absolute inset-0 w-full h-full opacity-70"
+                  viewBox="0 0 100 100"
+                  preserveAspectRatio="none"
+                >
+                  {waveformPoints.map((points, index) => (
+                    <line
+                      key={index}
+                      x1={points.split(" ")[0].split(",")[0]}
+                      y1={points.split(" ")[0].split(",")[1]}
+                      x2={points.split(" ")[1].split(",")[0]}
+                      y2={points.split(" ")[1].split(",")[1]}
+                      stroke="white"
+                      strokeWidth="0.8"
+                      strokeLinecap="round"
+                    />
+                  ))}
+                </svg>
+
+                {/* Content overlay */}
+                <div className="relative z-10 h-full flex items-center justify-center text-black text-xs font-medium">
+                  <div className="text-center leading-tight bg-white/20 backdrop-blur-sm rounded px-2 py-1">
+                    <div className="font-semibold">
+                      {Math.round(segmentDuration)}s
+                    </div>
+                    <div className="text-[10px] opacity-90">
+                      {section.playbackSpeed}x
+                      {focusedParticipant && (
+                        <span className="ml-1">• P{focusedParticipant}</span>
+                      )}
+                    </div>
+                  </div>
+                </div>
               </div>
-            ) : (
-              <div className="absolute inset-0 flex items-center justify-center text-xs font-bold">
-                {section.focusedParticipantId ? (
-                  <span className="text-purple-700">
-                    🎯 P
-                    {recordings.findIndex(
-                      (r) => r.id === section.focusedParticipantId
-                    ) + 1}
-                    {section.playbackSpeed !== 1.0 && (
-                      <span className="ml-1 text-xs">
-                        {section.playbackSpeed}x
-                      </span>
-                    )}
-                  </span>
-                ) : section.playbackSpeed !== 1.0 ? (
-                  <span
-                    className={`${
-                      section.playbackSpeed < 1.0
-                        ? "text-orange-700"
-                        : "text-blue-700"
-                    }`}
-                  >
-                    {section.playbackSpeed}x
-                  </span>
-                ) : null}
-              </div>
-            )}
-          </div>
-        ))}
+            );
+          })}
 
-        {splitPoints.map((point, index) => (
-          <div
-            key={`split-${point}-${index}`}
-            className="absolute top-0 h-full"
-            style={{
-              left: `${(point / duration) * 100}%`,
-              transform: "translateX(-50%)",
-              zIndex: 20,
-            }}
-          >
-            <div className="absolute w-0.5 h-full bg-red-500" />
+        {/* Current time indicator */}
+        <div
+          className="absolute top-0 w-0.5 h-full bg-white shadow-lg z-10"
+          style={{
+            left: `${(currentTime / duration) * 100}%`,
+          }}
+        >
+          <div className="absolute -top-1 -left-1 w-3 h-3 bg-white rounded-full shadow-lg"></div>
+        </div>
 
+        {/* Split points */}
+        {isSplitMode &&
+          splitPoints.map((splitTime, index) => (
             <div
-              className={`absolute w-4 h-4 bg-red-500 border-2 border-white rounded-full cursor-move shadow-lg hover:bg-red-600 transition-colors ${
+              key={index}
+              className={`absolute top-0 w-1 h-full bg-red-500 cursor-ew-resize z-20 ${
                 isDraggingSplit && draggingSplitIndex === index
-                  ? "scale-125 bg-red-600"
+                  ? "bg-red-600"
                   : ""
               }`}
               style={{
-                top: "-8px",
-                left: "50%",
-                transform: "translateX(-50%)",
+                left: `${(splitTime / duration) * 100}%`,
               }}
-              title={`Split at ${point.toFixed(
-                1
-              )}s - Drag to move, Right-click to delete`}
               onMouseDown={(e) => onSplitMouseDown(e, index)}
-              onContextMenu={(e) => onSplitContextMenu(e, index)}
-            />
-          </div>
-        ))}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                onSplitContextMenu(e, index);
+              }}
+            >
+              <div className="absolute -top-2 -left-1 w-3 h-3 bg-red-500 rounded-full"></div>
+            </div>
+          ))}
+      </div>
 
-        <div
-          className="h-full bg-blue-600 bg-opacity-30 rounded-full"
-          style={{ width: `${(currentTime / duration) * 100}%` }}
-        />
-
-        <div
-          className="absolute top-0 h-full w-1 bg-blue-800 rounded z-10"
-          style={{ left: `${(currentTime / duration) * 100}%` }}
-        />
+      {/* Timeline info */}
+      <div className="flex items-center justify-between text-xs text-muted-foreground">
+        <span>
+          Final duration:{" "}
+          {Math.round(
+            videoSections
+              .filter((s) => !s.isDeleted)
+              .reduce((acc, s) => acc + (s.endTime - s.startTime), 0)
+          )}
+          s
+        </span>
+        <span>{videoSections.filter((s) => !s.isDeleted).length} segments</span>
       </div>
     </div>
-  )
+  );
 }

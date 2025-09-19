@@ -58,6 +58,13 @@ export async function GET(request: NextRequest) {
           word_timestamps,
           language,
           confidence
+        ),
+        waveforms (
+          id,
+          waveform_data,
+          sample_rate,
+          duration,
+          points_count
         )
       `)
       .eq('room.host_id', user.id)

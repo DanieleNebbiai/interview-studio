@@ -127,7 +127,7 @@ function buildVideoSectionsFromAI(
 
 export async function POST(request: NextRequest) {
   try {
-    const { roomId, recordings, transcriptions, aiEditingResult } = await request.json()
+    const { roomId, recordings, transcriptions, waveforms, aiEditingResult } = await request.json()
 
     if (!recordings || !transcriptions) {
       return NextResponse.json(
@@ -244,6 +244,33 @@ export async function POST(request: NextRequest) {
 
         if (transcriptionError) {
           throw new Error(`Failed to save transcription: ${transcriptionError.message}`)
+        }
+
+        // Save waveform data if available
+        if (waveforms) {
+          const waveform = waveforms.find((w: any) => w.recordingId === recording.id)
+          if (waveform) {
+            const { error: waveformError } = await supabase
+              .from('waveforms')
+              .insert({
+                recording_id: recordingData.id,
+                waveform_data: {
+                  points: waveform.points,
+                  sampleRate: waveform.sampleRate,
+                  duration: waveform.duration
+                },
+                sample_rate: waveform.sampleRate,
+                duration: waveform.duration,
+                points_count: waveform.points.length
+              })
+
+            if (waveformError) {
+              console.error(`Failed to save waveform for recording ${recording.id}:`, waveformError)
+              errors.push(`Failed to save waveform: ${waveformError.message}`)
+            } else {
+              console.log(`Successfully saved waveform for recording: ${recording.id}`)
+            }
+          }
         }
 
         savedRecordings.push(recordingData)
