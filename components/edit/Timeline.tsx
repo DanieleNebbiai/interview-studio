@@ -53,6 +53,47 @@ interface TimelineProps {
   onSplitContextMenu: (event: React.MouseEvent, splitIndex: number) => void;
 }
 
+// Function to create smooth curved path using spline interpolation
+const createSmoothPath = (points: string[]): string => {
+  if (points.length < 2) return `M 0,100 L 100,100 Z`;
+
+  // Parse points to coordinates
+  const coords = points.map((point) => {
+    const [x, y] = point.split(",").map(Number);
+    return { x, y };
+  });
+
+  // Start from bottom-left, trace the waveform smoothly, then close at bottom-right
+  let path = `M 0,100 L ${coords[0].x},100 `;
+
+  // Create smooth curves using quadratic Bézier curves
+  for (let i = 0; i < coords.length - 1; i++) {
+    const current = coords[i];
+    const next = coords[i + 1];
+
+    if (i === 0) {
+      // First point - start curve
+      path += `Q ${current.x},${current.y} ${(current.x + next.x) / 2},${
+        (current.y + next.y) / 2
+      } `;
+    } else if (i === coords.length - 2) {
+      // Last point - end curve
+      path += `Q ${current.x},${current.y} ${next.x},${next.y} `;
+    } else {
+      // Middle points - smooth curve
+      const midX = (current.x + next.x) / 2;
+      const midY = (current.y + next.y) / 2;
+      path += `Q ${current.x},${current.y} ${midX},${midY} `;
+    }
+  }
+
+  // Close the path at bottom-right
+  const lastPoint = coords[coords.length - 1];
+  path += `L ${lastPoint.x},100 L 100,100 Z`;
+
+  return path;
+};
+
 export function Timeline({
   duration,
   currentTime,
@@ -156,14 +197,14 @@ export function Timeline({
                   );
                 });
 
-                // Convert to SVG format
+                // Convert to SVG path format for smooth curves
                 for (let i = 0; i < sectionPoints.length; i++) {
                   const point = sectionPoints[i];
                   const x = (i / (sectionPoints.length - 1 || 1)) * 100;
-                  const height = point.amplitude * 20; // Scale amplitude to visible height
-                  points.push(
-                    `${x},${50 - height / 2} ${x},${50 + height / 2}`
-                  );
+                  const height = point.amplitude * 60; // Increased from 20 to 60 for much higher amplitude
+                  // Only upper half - attach to bottom (y=100)
+                  const y = 100 - height; // Start from bottom and go up
+                  points.push(`${x},${Math.max(y, 0)}`); // Ensure we don't go above container
                 }
 
                 return points.length > 0 ? points : generateFallbackWaveform();
@@ -189,16 +230,15 @@ export function Timeline({
                   const intensity = Math.sin(i * 0.8) * 0.3 + 0.7;
                   const variation =
                     Math.sin(i * 2.1) * 0.4 + Math.cos(i * 1.7) * 0.3;
-                  const height = (15 + variation * 10) * intensity;
-                  points.push(
-                    `${x},${50 - height / 2} ${x},${50 + height / 2}`
-                  );
+                  const height = (25 + variation * 20) * intensity; // Increased amplitude
+                  // Only upper half - attach to bottom (y=100)
+                  const y = 100 - height;
+                  points.push(`${x},${Math.max(y, 0)}`);
                 } else {
                   // Silent periods - very low amplitude
-                  const silentNoise = Math.random() * 2 + 1; // Background noise
-                  points.push(
-                    `${x},${50 - silentNoise / 2} ${x},${50 + silentNoise / 2}`
-                  );
+                  const silentNoise = Math.random() * 5 + 2; // Increased background noise visibility
+                  const y = 100 - silentNoise;
+                  points.push(`${x},${Math.max(y, 95)}`); // Keep silence near bottom
                 }
               }
               return points;
@@ -231,18 +271,17 @@ export function Timeline({
                   viewBox="0 0 100 100"
                   preserveAspectRatio="none"
                 >
-                  {waveformPoints.map((points, index) => (
-                    <line
-                      key={index}
-                      x1={points.split(" ")[0].split(",")[0]}
-                      y1={points.split(" ")[0].split(",")[1]}
-                      x2={points.split(" ")[1].split(",")[0]}
-                      y2={points.split(" ")[1].split(",")[1]}
-                      stroke="white"
-                      strokeWidth="0.8"
-                      strokeLinecap="round"
-                    />
-                  ))}
+                  {waveformPoints.length > 0 && (
+                    <>
+                      {/* Single smooth curved waveform with spline interpolation */}
+                      <path
+                        d={createSmoothPath(waveformPoints)}
+                        fill="white"
+                        fillOpacity="0.5"
+                        stroke="none"
+                      />
+                    </>
+                  )}
                 </svg>
 
                 {/* Content overlay */}

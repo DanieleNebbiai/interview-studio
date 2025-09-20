@@ -285,6 +285,7 @@ export async function POST(request: NextRequest) {
     })
 
     const transcriptions: Transcription[] = []
+    const convertedAudioData: Array<{ recordingId: string; audioBuffer: string }> = []
     const errors: string[] = []
 
     // Process all recordings in parallel for faster processing
@@ -444,7 +445,14 @@ export async function POST(request: NextRequest) {
         }
 
         console.log(`Successfully transcribed recording ${recording.id}: ${transcription.text.length} characters`)
-        return { success: true, transcription }
+        return {
+          success: true,
+          transcription,
+          convertedAudio: {
+            recordingId: recording.id,
+            audioBuffer: audioBuffer.toString('base64') // Convert to base64 for JSON transport
+          }
+        }
 
       } catch (error) {
         console.error(`Error transcribing recording ${recording.id}:`, error)
@@ -475,9 +483,12 @@ export async function POST(request: NextRequest) {
     // Collect results
     results.forEach((result, index) => {
       if (result.status === 'fulfilled') {
-        const { success, transcription, error } = result.value
+        const { success, transcription, convertedAudio, error } = result.value
         if (transcription) {
           transcriptions.push(transcription)
+        }
+        if (convertedAudio) {
+          convertedAudioData.push(convertedAudio)
         }
         if (error) {
           errors.push(error)
@@ -505,6 +516,7 @@ export async function POST(request: NextRequest) {
       transcriptionsCount: transcriptions.length,
       transcriptions,
       recordings, // Pass through the original recordings data
+      convertedAudioData, // Include converted audio for waveform processing
       errors: errors.length > 0 ? errors : undefined,
       message: `${transcriptions.length} trascrizioni completate con successo`
     })

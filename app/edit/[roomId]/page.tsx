@@ -1005,23 +1005,7 @@ export default function EditPage() {
       playbackSpeed: speed,
     };
 
-    console.log("🚨 DEBUG: Testing direct API call with section:", testSection);
-
-    try {
-      const response = await fetch("/api/debug-save", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          roomId,
-          testSection,
-        }),
-      });
-
-      const result = await response.json();
-      console.log("🚨 DEBUG API Response:", result);
-    } catch (error) {
-      console.error("🚨 DEBUG API Error:", error);
-    }
+    console.log("🚨 DEBUG: Processing section:", testSection);
   };
 
   const resetSplits = () => {

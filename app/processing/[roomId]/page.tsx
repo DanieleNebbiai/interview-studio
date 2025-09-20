@@ -289,6 +289,7 @@ export default function ProcessingPage() {
         body: JSON.stringify({
           roomId: data.roomId,
           recordings: transcribeData.recordings,
+          convertedAudioData: transcribeData.convertedAudioData, // Pass converted audio from transcribe
         }),
       });
 
